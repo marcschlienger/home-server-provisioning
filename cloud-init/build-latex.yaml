@@ -1,0 +1,27 @@
+#cloud-config
+# =============================================================================
+# LaTeX image build — runs on top of ubuntu-base.
+# texlive-full is ~5 GB and takes 20–40 min to install; this is expected.
+# =============================================================================
+
+package_update: true
+package_upgrade: false
+
+packages:
+  # Full TeX Live distribution — includes latexmk, biber, pdfcrop, and
+  # essentially every package you will ever need.
+  - texlive-full
+  # Markdown → LaTeX → PDF pipeline
+  - pandoc
+  # PDF utilities (inspect, split, merge, crop, rasterize)
+  - ghostscript
+  - poppler-utils
+  - pdf2svg
+  # Image conversion tools useful in LaTeX workflows
+  - imagemagick
+  - inkscape
+
+runcmd:
+  - apt-get clean && rm -rf /var/lib/apt/lists/*
+
+final_message: "LaTeX image build complete."

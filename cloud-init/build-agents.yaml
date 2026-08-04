@@ -1,0 +1,20 @@
+#cloud-config
+# =============================================================================
+# Agents image build — runs on top of ubuntu-base.
+# Installs Claude Code, Codex, and Pi CLIs system-wide via npm.
+# API keys are NOT included here; they come in via dotfiles at launch time.
+# =============================================================================
+
+runcmd:
+  # Claude Code CLI (Anthropic)
+  - npm install -g @anthropic-ai/claude-code
+
+  # Codex CLI (OpenAI)
+  - npm install -g @openai/codex
+
+  # Pi coding agent
+  - npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+
+  - apt-get clean && rm -rf /var/lib/apt/lists/*
+
+final_message: "Agents image build complete."

@@ -1,0 +1,89 @@
+#cloud-config
+# =============================================================================
+# Base image build — installs all tools common to every VM.
+# Dotfiles are NOT included here; they are bootstrapped at VM launch time.
+# Tailscale is intentionally NOT installed in VM images. VMs are reached from
+# the host with `incus exec` or host-local SSH on the Incus bridge.
+# =============================================================================
+
+package_update: true
+package_upgrade: true
+
+packages:
+  # Shell + multiplexer
+  - zsh
+  - tmux
+  # Editor (config comes entirely from dotfiles)
+  - neovim
+  # Git
+  - git
+  # Host-local SSH access from the Incus bridge
+  - openssh-server
+  # Search / navigation
+  - ripgrep
+  - fd-find
+  - fzf
+  - bat
+  - eza
+  # Dotfile management
+  - stow
+  # System utilities
+  - btop
+  - jq
+  - curl
+  - wget
+  - unzip
+  - make
+  - build-essential
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - zoxide
+  # Python runtime
+  - python3
+  - python3-pip
+  - python3-venv
+  # cloud-init helpers (ensure growpart works on first boot of cloned VMs)
+  - cloud-guest-utils
+
+runcmd:
+  # Ensure keyring dir exists before any third-party repo install.
+  # (Ubuntu 24.04+ ships it, but defensive — avoids `dd of=` failing on stripped bases.)
+  - mkdir -p /etc/apt/keyrings
+
+  # fd: Ubuntu ships it as fdfind; create the expected symlink
+  - ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
+  # yq — not in Ubuntu repos, install binary
+  - >
+    curl -sL
+    "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+    -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
+  # Node.js LTS via NodeSource (needed for the agent npm packages)
+  - curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+  - apt-get install -y nodejs
+
+  # gh CLI
+  - >
+    curl -fsSL
+    https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+  - >
+    echo "deb [arch=$(dpkg --print-architecture)
+    signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg]
+    https://cli.github.com/packages stable main"
+    > /etc/apt/sources.list.d/github-cli.list
+  - apt-get update && apt-get install -y gh
+
+  # NOTE: Tailscale is intentionally NOT installed in the base image.
+  # VMs are reached via `incus exec` or host-local SSH on incusbr0.
+
+  # The fixed admin VM user is created at VM launch time.
+
+  # Clean up apt caches to keep the image lean
+  - apt-get clean && rm -rf /var/lib/apt/lists/*
+
+final_message: "Base image build complete."
