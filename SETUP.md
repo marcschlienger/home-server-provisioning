@@ -226,16 +226,17 @@ default) from a Tailscale-connected device.
 
 `GIT_REPOS_ROOT` is the host-side parent directory for repos when you pass a
 bare name to `--git`. Set it in `config.env` to wherever your SSD storage is
-mounted, for example:
+mounted. The default matches the recommended `/data` mount:
 
 ```bash
-GIT_REPOS_ROOT="/mnt/ssd/git"
+GIT_REPOS_ROOT="/data/git"
 sudo mkdir -p "$GIT_REPOS_ROOT"
 sudo chown $USER:$USER "$GIT_REPOS_ROOT"
 ```
 
-This is where you clone repos from GitHub / GitLab / Codeberg using your own
-SSH credentials. They get bind-mounted into VMs read-write.
+Change this path if you mount repository storage somewhere else. This is where
+you clone repos from GitHub / GitLab / Codeberg using your own SSH credentials.
+They get bind-mounted into VMs read-write.
 
 You can also bypass `GIT_REPOS_ROOT` for a single VM by passing an absolute
 host path:
@@ -310,20 +311,20 @@ following Nextcloud AIO's migration procedure.
 After setup, hook up your existing `nextcloudcmd` sync workflow on the
 backup box pointed at the new instance URL.
 
-### 2.8 Get this provisioning repo onto the server
+### 2.8 Get this repository onto the server
 
-This directory (cloud-init/, scripts/, config.env, SETUP.md) is
-the source of truth for everything below. Put it on the freshly-installed
-server by whichever path you prefer:
+This repository (`cloud-init/`, `compose/`, `scripts/`, `config.env`,
+`SETUP.md`) is the source of truth for everything below. Put it on the
+freshly-installed server by whichever path you prefer:
 
 ```bash
 # Option A — clone from your git server (Codeberg / GitHub / GitLab / private):
 cd ~/
-git clone <your-URL-for-this-repo> incus-provisioning
-cd incus-provisioning
+git clone <your-URL-for-this-repo> home-server-provisioning
+cd home-server-provisioning
 
 # Option B — rsync from your workstation if you keep it locally:
-rsync -av ~/Documents/1-projects/incus/ user@server:~/incus-provisioning/
+rsync -av ~/path/to/home-server-provisioning/ user@server:~/home-server-provisioning/
 ```
 
 The point is just "make these files available on the server." Git is the
@@ -765,7 +766,7 @@ incus exec build-base-<timestamp> -- cat /var/log/cloud-init-output.log
 ## 9. File Layout Reference
 
 ```
-incus/
+home-server-provisioning/
 ├── SETUP.md                          ← this file
 ├── README.md                         ← short pointer to SETUP.md
 ├── PROJECT_REVIEW.md                 ← static review notes

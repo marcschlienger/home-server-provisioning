@@ -12,8 +12,8 @@ VM), persistent agent sandboxes (Incus VMs with Claude Code / Codex / Pi).
   bootstrap path, day-to-day usage, troubleshooting, file layout reference.
 - **[`compose/nextcloud-aio.compose.yaml`](./compose/nextcloud-aio.compose.yaml)** —
   Nextcloud AIO mastercontainer Compose file.
-- **[`PROJECT_REVIEW.md`](./PROJECT_REVIEW.md)** — current static review
-  notes (findings + suggested fixes).
+- **[`PROJECT_REVIEW.md`](./PROJECT_REVIEW.md)** — current static review,
+  accepted tradeoffs, and residual verification limits.
 - **[`config.env`](./config.env)** — tracked defaults (resource sizes,
   image names, GIT_REPOS_ROOT).
 - **[`LICENSE`](./LICENSE)** — MIT License.
