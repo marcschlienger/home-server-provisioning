@@ -122,7 +122,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 S_DOTFILES_REPO="https://github.com/example/dotfiles.git"
 S_INSTALL_CMD="stow ."
 S_ADMIN_USER="alice"
-S_TS_AUTHKEY="tskey-auth-EXAMPLE-deadbeef1234567890abcdef"
+S_TS_AUTHKEY="tskey-auth-EXAMPLE"
 S_TS_HOSTNAME="jupyter-test"
 
 # launch-init.yaml.tpl (LaTeX + agent VMs) — dotfiles and no-dotfiles paths.

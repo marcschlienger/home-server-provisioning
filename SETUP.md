@@ -19,7 +19,7 @@ direct host execution where overhead would be wasted (Nextcloud).
 | CPU | AMD Ryzen 9 — 12 cores / 24 threads |
 | RAM | 128 GB |
 | GPU | AMD Radeon RX 580 (Polaris, 8 GB VRAM) — Vulkan |
-| Storage | SSD/NVMe — ext4 currently (ZFS path documented but optional) |
+| Storage | NVMe with LVM (`/` + isolated Incus LV); separate ext4 data SSD at `/data` |
 | Network | Tailscale for host management + optional Jupyter; VMs use host-local Incus networking |
 
 ### Workloads at a glance
@@ -35,7 +35,7 @@ direct host execution where overhead would be wasted (Nextcloud).
 | **Agent VMs (persistent)** | Incus VM | Per-task sandbox; reached via incus exec or host-local SSH; no Tailscale |
 | **Nextcloud data** | `/data/ncdata` on the data SSD | AIO data directory via `NEXTCLOUD_DATADIR` |
 | **Git repos** | Host filesystem configured by `GIT_REPOS_ROOT` | Bind-mounted into VMs |
-| **Backups** | User's existing system | rclone+crypt + Borg → B2 / Hetzner / rsync.net |
+| **Backups** | Existing off-host backup system | Sync + local incremental + encrypted off-site copies |
 
 ### Architecture diagram
 
@@ -53,8 +53,10 @@ direct host execution where overhead would be wasted (Nextcloud).
 │                        └──────► Nextcloud AIO   │        │               │
 │                               └─────────────────┘        │               │
 │                                                          │               │
-│   /data/ncdata  ───────── Nextcloud AIO data              │               │
-│   GIT_REPOS_ROOT  ─────── bind-mounted via Incus ─────────┤               │
+│   / (host LV) ─────────── Ubuntu + Caddy + Docker          │               │
+│   /srv/incus (Incus LV) ─ VM/container storage ───────────┤               │
+│   /data/ncdata ────────── Nextcloud AIO data              │               │
+│   GIT_REPOS_ROOT ──────── bind-mounted via Incus ─────────┤               │
 │       ├─ teaching-worksheets/                            │               │
 │       ├─ project-foo/                                    │               │
 │       └─ ...                                             │               │
@@ -68,12 +70,11 @@ direct host execution where overhead would be wasted (Nextcloud).
                                   │  Tailscale(host) + Internet
                                   ▼
                 ┌──────────────────────────────┐
-                │  Old Nextcloud box (recycled)│
-                │  → backup target             │
-                │  → nextcloudcmd sync         │
-                │  → rsync incremental         │
-                │  → rclone(+crypt) + Borg →   │
-                │     B2 / Hetzner / rsync.net │
+                │  Backup host / off-site      │
+                │  storage                     │
+                │  → application-level sync    │
+                │  → local incremental copies  │
+                │  → encrypted off-site copies │
                 └──────────────────────────────┘
 ```
 
@@ -100,7 +101,117 @@ This is the order to follow on fresh hardware to rebuild the working system.
   chsh -s $(which zsh)        # optional, switch to zsh
   ```
 
-### 2.2 Install Tailscale (on the host)
+### 2.2 Configure the NVMe LVM layout
+
+Ubuntu's guided LVM install can place the full NVMe into a volume group while
+creating only a roughly 100 GiB root logical volume. That is easy to miss:
+`df` shows the small filesystem, while `vgs` shows the unallocated capacity.
+Do not initialize Incus on that small root filesystem. A VM image rebuild can
+temporarily require both the old and new images and fill `/`, which also stops
+Caddy and Docker from writing. Ubuntu's
+[LVM overview](https://documentation.ubuntu.com/server/explanation/storage/about-lvm/)
+explains the physical-volume, volume-group, and logical-volume layers used
+below.
+
+The current target layout is:
+
+| Allocation | Size | Purpose |
+|---|---:|---|
+| `ubuntu-vg/ubuntu-lv` mounted at `/` | 250 GiB | Ubuntu, Caddy, Docker, logs, host tools |
+| `ubuntu-vg/incus-lv` mounted at `/srv/incus` | 1,200 GiB | Incus instances, build VMs, and image caches |
+| Free extents in `ubuntu-vg` | remainder | Online expansion of either LV later |
+| Data SSD mounted at `/data` | full device | Nextcloud data and host Git repositories |
+
+Sizes are targets for this hardware, not universal requirements. On different
+hardware, keep the same separation and leave some volume-group space free.
+
+Inspect the actual device and LVM names before changing anything:
+
+```bash
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+sudo pvs
+sudo vgs
+sudo lvs -o lv_name,vg_name,lv_size
+```
+
+On the documented layout, grow the installer-created 100 GiB root LV to
+250 GiB. `--resizefs` grows ext4 at the same time and does not require a reboot:
+
+```bash
+sudo lvextend --resizefs --size 250G /dev/ubuntu-vg/ubuntu-lv
+df -hT /
+```
+
+Create the dedicated Incus LV and filesystem. **Run `mkfs.ext4` only on the
+newly created `incus-lv`; formatting an existing LV destroys its contents.**
+
+```bash
+sudo lvcreate --size 1200G --name incus-lv ubuntu-vg
+sudo mkfs.ext4 -L incus /dev/ubuntu-vg/incus-lv
+sudo mkdir -p /srv/incus
+sudo blkid /dev/ubuntu-vg/incus-lv
+```
+
+Add one entry to `/etc/fstab`, using the UUID printed by `blkid`. Either UUID
+form is valid; this runbook follows Ubuntu's `/dev/disk/by-uuid/` style:
+
+```fstab
+/dev/disk/by-uuid/<INCUS_FILESYSTEM_UUID> /srv/incus ext4 defaults,noatime 0 2
+```
+
+Do not paste the complete human-readable `blkid` output into `fstab`; reduce it
+to the single entry above. Validate and mount without rebooting:
+
+```bash
+sudo findmnt --verify --verbose
+sudo systemctl daemon-reload
+sudo mount /srv/incus
+findmnt /srv/incus
+df -h / /srv/incus
+sudo vgs
+```
+
+`findmnt` must show `/srv/incus` backed by `incus-lv` before Incus storage is
+created. A later reboot will mount it automatically.
+
+Mount the separate data SSD at `/data` by UUID as well. If the device already
+contains data, **do not format or repartition it**. Identify the correct ext4
+partition from `lsblk -f` and `blkid`, create the mount point, and add a second
+`fstab` entry:
+
+```bash
+sudo mkdir -p /data
+sudo blkid /dev/sda1
+```
+
+```fstab
+/dev/disk/by-uuid/<DATA_FILESYSTEM_UUID> /data ext4 defaults,noatime 0 2
+```
+
+Then validate and mount it:
+
+```bash
+sudo findmnt --verify --verbose
+sudo systemctl daemon-reload
+sudo mount /data
+findmnt /data
+df -h /data
+```
+
+On replacement hardware with a blank data SSD, partition and format the new
+device only after identifying it unambiguously, then restore the data from
+backup. Never copy a device name such as `/dev/sda` from this runbook without
+checking the target host; enumeration can change between boots and machines.
+
+Both LVs can be expanded online later. Check `vgs` first, then add only the
+required amount, for example:
+
+```bash
+sudo vgs
+sudo lvextend --resizefs --size +100G /dev/ubuntu-vg/incus-lv
+```
+
+### 2.3 Install Tailscale (on the host)
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -110,7 +221,7 @@ sudo tailscale up --ssh        # --ssh enables Tailscale SSH for this host
 Sign in via the URL it prints. From now on you can SSH to this host over
 Tailscale by hostname.
 
-### 2.3 Install Incus
+### 2.4 Install and initialize Incus
 
 Ubuntu 26.04 ships Incus in the main repos:
 
@@ -119,14 +230,96 @@ sudo apt install -y incus incus-extra
 # incus-extra brings incus-benchmark, incus-migrate, lxd-to-incus, etc.
 sudo adduser $USER incus-admin
 # Log out and back in (or `newgrp incus-admin`) for group to take effect
-incus admin init
 ```
 
-For `incus admin init`, accept defaults unless you have specific needs:
-- Storage pool: `default`, backend: `dir` (ext4-friendly) or `zfs` if available
-- Network: yes, `incusbr0` with default subnet
-- Trust password: leave blank (you're using local socket)
-- MAAS, clustering: no
+After logging out and back in, create the pool on the mounted Incus filesystem
+and initialize the bridge and default profile. The explicit preseed prevents an
+accidental root-backed pool under `/var/lib/incus`. See the official
+[`incus admin init` preseed reference](https://linuxcontainers.org/incus/docs/main/reference/manpages/incus/admin/init/)
+and [profile documentation](https://linuxcontainers.org/incus/docs/main/profiles/)
+for the schema and device inheritance model:
+
+```bash
+sudo mkdir -p /srv/incus/pool
+incus admin init --preseed <<'EOF'
+config: {}
+networks:
+- name: incusbr0
+  type: bridge
+  config:
+    ipv4.address: auto
+    ipv4.nat: "true"
+    ipv6.address: auto
+    ipv6.nat: "true"
+storage_pools:
+- name: vms
+  driver: dir
+  description: Dedicated Incus storage
+  config:
+    source: /srv/incus/pool
+profiles:
+- name: default
+  description: Default Incus profile
+  config: {}
+  devices:
+    eth0:
+      name: eth0
+      network: incusbr0
+      type: nic
+    root:
+      path: /
+      pool: vms
+      type: disk
+EOF
+```
+
+This uses Incus's `dir` storage driver on the dedicated ext4 filesystem. The
+[storage overview](https://linuxcontainers.org/incus/docs/main/explanation/storage/)
+describes pools and volumes; the
+[`dir` driver reference](https://linuxcontainers.org/incus/docs/main/reference/storage_dir/)
+documents its behavior and tradeoffs.
+
+The profile places instance root disks on `vms`, but Incus also has
+daemon-wide image and backup tarballs. Put those on the dedicated filesystem
+as custom volumes as well. Incus documents this arrangement under
+[custom storage volumes](https://linuxcontainers.org/incus/docs/main/howto/storage_volumes/),
+while the exact daemon keys and required API extensions are listed in the
+[server configuration reference](https://linuxcontainers.org/incus/docs/main/server_config/):
+
+```bash
+incus storage volume create vms daemon-images
+incus storage volume create vms daemon-backups
+incus config set storage.images_volume=vms/daemon-images
+incus config set storage.backups_volume=vms/daemon-backups
+```
+
+Newer Incus versions can also relocate instance logs. Configure that optional
+volume only if the server advertises the `daemon_storage_logs` API extension:
+
+```bash
+if incus info | grep -q 'daemon_storage_logs'; then
+  incus storage volume create vms daemon-logs
+  incus config set storage.logs_volume=vms/daemon-logs
+fi
+```
+
+Verify the failure boundary before building images:
+
+```bash
+incus storage list
+incus storage volume list vms
+incus storage show vms
+incus profile show default
+incus config show
+findmnt /srv/incus
+```
+
+There should be one pool named `vms`, its source should be
+`/srv/incus/pool`, and the default profile's root device should say
+`pool: vms`. The image and backup server settings must point to their custom
+volumes on `vms`; the log setting is optional and version-dependent. Only the
+small Incus database, daemon state, and—on older versions—instance logs remain
+below `/var/lib/incus` on root.
 
 **Verify the `images:` remote is present** (it's an Incus default, so it
 usually is). This is the remote that hosts the Ubuntu cloud image we'll
@@ -150,7 +343,7 @@ incus image copy images:ubuntu/26.04/cloud local: --alias ubuntu-2604-cloud
 # Not strictly required — build-images.sh fetches on demand.
 ```
 
-### 2.4 Install Docker (for Nextcloud AIO)
+### 2.5 Install Docker (for Nextcloud AIO)
 
 Use Docker's official apt repository, not the convenience script.
 
@@ -173,7 +366,7 @@ sudo usermod -aG docker $USER
 # Log out and back in for group to take effect
 ```
 
-### 2.5 Install Caddy (reverse proxy)
+### 2.6 Install Caddy (reverse proxy)
 
 ```bash
 sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
@@ -222,7 +415,7 @@ JupyterHub is intentionally **not** included in the public Caddy config. If
 `JUPYTER_TS_AUTHKEY` is set, use its Tailscale name (`http://jupyter/` by
 default) from a Tailscale-connected device.
 
-### 2.6 Configure the host git workspace directory
+### 2.7 Configure the host git workspace directory
 
 `GIT_REPOS_ROOT` is the host-side parent directory for repos when you pass a
 bare name to `--git`. Set it in `config.env` to wherever your SSD storage is
@@ -245,7 +438,7 @@ host path:
 ./scripts/new-agent-vm.sh refactor-foo --git /mnt/other-ssd/repos/project-foo
 ```
 
-### 2.7 Bring up Nextcloud AIO
+### 2.8 Bring up Nextcloud AIO
 
 Follow the official AIO docs (`https://github.com/nextcloud/all-in-one`).
 The Compose file in this repo follows the official AIO Compose example, with
@@ -311,7 +504,7 @@ following Nextcloud AIO's migration procedure.
 After setup, hook up your existing `nextcloudcmd` sync workflow on the
 backup box pointed at the new instance URL.
 
-### 2.8 Get this repository onto the server
+### 2.9 Get this repository onto the server
 
 This repository (`cloud-init/`, `compose/`, `scripts/`, `config.env`,
 `SETUP.md`) is the source of truth for everything below. Put it on the
@@ -330,7 +523,7 @@ rsync -av ~/path/to/home-server-provisioning/ user@server:~/home-server-provisio
 The point is just "make these files available on the server." Git is the
 clean path; rsync works fine if you don't want to publish this anywhere.
 
-### 2.9 Configure `config.env` and `config.env.local`
+### 2.10 Configure `config.env` and `config.env.local`
 
 There are **two** config files; both get sourced by every script (`.local`
 second, so it overrides). The split exists so private local values never get
@@ -347,9 +540,9 @@ cat > config.env.local <<'EOF'
 # Your real dotfiles repo (overrides the placeholder in config.env).
 DOTFILES_REPO="git@github.com:YOUR_USER/dotfiles.git"
 
-# Optional: put JupyterHub on your tailnet instead of exposing it publicly.
-# Generate a reusable, pre-authorized key in the Tailscale admin console.
-JUPYTER_TS_AUTHKEY="tskey-auth-REPLACE-WITH-REAL-KEY"
+# Optional: put JupyterHub on your tailnet. Store a real reusable auth key
+# only in this ignored file; leave empty when Jupyter should remain local.
+JUPYTER_TS_AUTHKEY=""
 EOF
 chmod 600 config.env.local
 ```
@@ -370,7 +563,7 @@ Notes:
   not install or use Tailscale. If set, it must be a reusable auth key that
   starts with `tskey-auth-`.
 
-### 2.10 Build the base Incus images
+### 2.11 Build the base Incus images
 
 ```bash
 ./scripts/build-images.sh
@@ -386,7 +579,28 @@ Subsequent rebuilds of one image only:
 ./scripts/build-images.sh --only agents
 ```
 
-### 2.11 VM login
+Monitor both failure domains during a build:
+
+```bash
+watch -n 5 'df -h / /srv/incus'
+```
+
+The script preserves the previous aliased image until its replacement has been
+published successfully. After a successful rebuild, `incus image list` can
+therefore contain an older image with a blank alias. Once the replacement is
+verified, delete only the identified obsolete fingerprint through Incus:
+
+```bash
+incus image list
+incus image delete <obsolete-unaliased-fingerprint>
+```
+
+Never remove files directly from `/var/lib/incus` or `/srv/incus/pool`.
+`build-images.sh` checks that the default profile uses `INCUS_STORAGE_POOL` and
+that `storage.images_volume` points to a custom volume on that pool. It aborts
+before launching a build if either isolation setting is missing.
+
+### 2.12 VM login
 
 The fixed VM login is:
 
@@ -413,7 +627,7 @@ Passwordless SSH is not configured by these scripts anymore. If you later want
 key-based login, add your public key manually to
 `/home/admin/.ssh/authorized_keys` inside the VM.
 
-### 2.12 Launch the persistent workloads
+### 2.13 Launch the persistent workloads
 
 **LaTeX workspace** (teaching worksheets):
 ```bash
@@ -424,7 +638,7 @@ key-based login, add your public key manually to
 
 **JupyterHub** (small group / personal):
 ```bash
-./scripts/new-jupyter-container.sh marc jupyter
+./scripts/new-jupyter-container.sh adminuser jupyter
 # wait ~10 min, then visit http://jupyter/ from a Tailscale-connected device
 # if JUPYTER_TS_AUTHKEY is set. Otherwise visit http://<container-ip>/ locally.
 ```
@@ -436,7 +650,7 @@ key-based login, add your public key manually to
 incus exec ollama -- ollama pull llama3.1:8b
 ```
 
-### 2.13 Verify host and VM connectivity
+### 2.14 Verify host and VM connectivity
 
 From your workstation:
 ```bash
@@ -548,19 +762,16 @@ incus delete <name>                           # destroy the instance
 
 ## 4. Backups
 
-The user's existing battle-tested backup system handles this — **do not
-introduce new backup tools**. The system is:
+Use the existing backup system rather than introducing another backup stack.
+At minimum, preserve independent local and encrypted off-site copies:
 
 | Tier | What | How |
 |---|---|---|
-| Sync (source of truth on backup box) | Nextcloud data | `nextcloudcmd` sync |
-| Local incremental | Snapshot of synced data | User's rsync script |
-| Off-site #1 (encrypted) | Same data | `rclone` with `crypt` backend |
-| Off-site #2 (encrypted, different tool) | Same data | `borg` |
-| Off-site providers (×3 for redundancy) | All of the above | Backblaze B2, Hetzner Storage Box, rsync.net |
+| Application-level sync | Nextcloud data | Existing Nextcloud-compatible sync workflow |
+| Local incremental | Snapshot of synced data and host repositories | Existing incremental-copy workflow |
+| Off-site copy | Important host data | Encrypted backup to one or more independent providers |
 
-**Extension for this new architecture:** point existing scripts at the new
-sources:
+Point the existing backup workflow at the new sources:
 
 - `nextcloudcmd` — update target URL to the AIO instance on this host
 - `rsync` sources — add:
@@ -586,14 +797,15 @@ Specifically:
 - If an agent makes commits but doesn't push, the commits live in the working
   tree on the host-side repo path — already on the host, already in your
   backup tree
-- OpenWebUI chats live inside the Ollama VM's Docker volume. If chat history
-  matters to you, add the Ollama VM's `openwebui` volume path to your rsync
-  sources; otherwise treat as disposable.
+- OpenWebUI chats live inside a Docker volume in the Ollama VM and are not
+  covered by the host bind mounts. The default policy treats them as
+  disposable. If chat history matters, add an explicit export or backup from
+  inside that VM rather than assuming the host backup can see the volume.
 
 ### If you later install ZFS root
 
 Add ZFS snapshots + `syncoid` as a **fast VM-level tier**, layered alongside
-restic/borg (not replacing). Install:
+the off-host backups rather than replacing them. Install:
 ```bash
 sudo apt install sanoid
 # configure /etc/sanoid/sanoid.conf to snapshot ZFS datasets on schedule
@@ -681,24 +893,22 @@ admin account in a non-standard way, etc.):
 - You may not be able to read/edit them from the host without `sudo`
 - The launch scripts print a `WARNING` when they detect this mismatch
 
-**Fix options:**
+`raw.idmap` is a container-only option and does not solve this for VMs. Choose
+one of these approaches before putting important work in a bind mount:
 
-1. **Easiest:** change the host directory's group ownership to match your
-   actual UID/GID and accept that the VM username inside the VM is
-   really your host UID:
-   ```bash
-   sudo chown -R $USER:$USER "$GIT_REPOS_ROOT/<repo>"
-   ```
-   Then make sure the VM user can write (group write bit, ACLs,
-   or `chmod -R u+rwX,g+rwX "$GIT_REPOS_ROOT/<repo>"`).
+1. **Preferred for this single-user server:** keep the host account that owns
+   `GIT_REPOS_ROOT` at UID/GID 1000. This matches the image's `admin` user and
+   requires no translation.
 
-2. **Cleaner long-term:** configure Incus `raw.idmap` on the VM to map your
-   host UID/GID onto the VM's 1000:
-   ```bash
-   incus config set <vm-name> raw.idmap "both $(id -u) 1000"
-   incus restart <vm-name>
-   ```
-   The VM user now reads/writes as your host UID, transparently.
+2. **For a host account with another UID:** establish a shared numeric group or
+   POSIX ACL policy that grants both the host account and VM UID 1000 access to
+   the repository. Apply it to a test repository first and verify creation,
+   modification, and deletion in both directions. The launch scripts warn about
+   the mismatch but deliberately do not rewrite ownership recursively.
+
+3. **For a permanent multi-user design:** make the VM user UID/GID configurable
+   in the image templates and rebuild the images. Do not try to repair a
+   mismatch by recursively changing the ownership of all `/data` content.
 
 ### Sanity check
 
@@ -715,6 +925,125 @@ ls -ln "$GIT_REPOS_ROOT/<repo>/.test"  # should show your UID, readable + remova
 ---
 
 ## 7. Troubleshooting
+
+### Host root fills during an Incus image build
+
+Typical symptoms are `No space left on device` from the image build followed by
+unrelated host services such as Caddy or Docker failing to write. Check bytes,
+inodes, the LVM allocation, and the largest root directories:
+
+```bash
+df -hT / /srv/incus /data
+df -ih / /srv/incus /data
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+sudo pvs
+sudo vgs
+sudo lvs -o lv_name,vg_name,lv_size
+sudo du -xhd1 / 2>/dev/null | sort -h
+sudo du -xhd1 /var/lib 2>/dev/null | sort -h
+sudo docker system df -v
+incus list --all-projects
+incus image list
+```
+
+With the `dir` driver, `incus storage info` reports usage of the backing
+filesystem, not just the bytes owned by Incus. Use `du` on the Incus data path
+when distinguishing Incus usage from other consumers of the same filesystem.
+
+Do not run broad Docker volume pruning and do not delete runtime files by hand.
+If an Incus build instance is disposable, delete it through Incus:
+
+```bash
+incus delete <failed-build-instance> --force
+```
+
+Delete obsolete images by alias or fingerprint only after checking
+`incus image list`. The Incus
+[image-handling documentation](https://linuxcontainers.org/incus/docs/main/image-handling/)
+also explains cached remote images and automatic cache expiry:
+
+```bash
+incus image delete <obsolete-alias-or-fingerprint>
+```
+
+If root has free LVM extents and only needs emergency headroom, extend it
+online with `lvextend --resizefs`. Use the allocation in section 2.2 rather
+than consuming `100%FREE`, so capacity remains available for the isolated
+Incus LV.
+
+### Migrate an existing root-backed Incus pool
+
+Use this procedure when Incus was initialized before `/srv/incus` existed and
+its `dir` pool source is below `/var/lib/incus`. First complete the LV,
+filesystem, `fstab`, and mount steps in section 2.2. Then create the new pool:
+
+```bash
+sudo mkdir -p /srv/incus/pool
+incus storage create vms dir source=/srv/incus/pool
+incus storage volume create vms daemon-images
+incus storage volume create vms daemon-backups
+incus config set storage.images_volume=vms/daemon-images
+incus config set storage.backups_volume=vms/daemon-backups
+if incus info | grep -q 'daemon_storage_logs'; then
+  incus storage volume create vms daemon-logs
+  incus config set storage.logs_volume=vms/daemon-logs
+fi
+```
+
+Inspect all projects before deciding whether existing instances are disposable:
+
+```bash
+incus list --all-projects
+incus image list
+incus storage list
+```
+
+To retain an instance, stop it and move its root volume through Incus:
+
+```bash
+incus stop <instance>
+incus move <instance> --storage vms
+incus start <instance>
+```
+
+This follows Incus's documented
+[instance and storage-volume move procedure](https://linuxcontainers.org/incus/docs/main/howto/storage_move_volume/).
+
+When no instances remain on the old pool, point the default profile at `vms`.
+If the profile already has a root device, update it:
+
+```bash
+incus profile device set default root pool=vms
+```
+
+If that command reports `Device doesn't exist`, inspect the profile. Add the
+missing root device only when there is no other `type: disk`, `path: /` device:
+
+```bash
+incus profile show default
+incus profile device add default root disk path=/ pool=vms
+```
+
+Verify the profile before removing the old pool:
+
+```bash
+incus profile show default
+incus storage show vms
+incus storage show default
+```
+
+The root device must say `pool: vms`. If `incus storage show default` confirms
+that nothing uses the old pool, remove it through Incus:
+
+```bash
+incus storage delete default
+incus storage list
+df -h / /srv/incus
+```
+
+`Storage pool not found` at the deletion step simply means the old pool was
+already removed. The Incus daemon's small database and network state remain in
+`/var/lib/incus`; that is expected and should not be deleted.
 
 ### Cloud-init failure during image build
 ```bash
@@ -750,8 +1079,18 @@ incus exec build-base-<timestamp> -- cat /var/log/cloud-init-output.log
 
 ## 8. References
 
-- Ubuntu Server: https://ubuntu.com/server
-- Incus: https://linuxcontainers.org/incus/
+- [Ubuntu Server](https://ubuntu.com/server)
+- [Ubuntu LVM guide](https://documentation.ubuntu.com/server/explanation/storage/about-lvm/)
+- [Incus documentation](https://linuxcontainers.org/incus/docs/main/)
+- [Incus initialization and preseed reference](https://linuxcontainers.org/incus/docs/main/reference/manpages/incus/admin/init/)
+- [Incus profiles](https://linuxcontainers.org/incus/docs/main/profiles/)
+- [Incus storage concepts](https://linuxcontainers.org/incus/docs/main/explanation/storage/)
+- [Incus storage-pool management](https://linuxcontainers.org/incus/docs/main/howto/storage_pools/)
+- [Incus directory storage driver](https://linuxcontainers.org/incus/docs/main/reference/storage_dir/)
+- [Incus custom storage volumes](https://linuxcontainers.org/incus/docs/main/howto/storage_volumes/)
+- [Incus server configuration keys](https://linuxcontainers.org/incus/docs/main/server_config/)
+- [Incus instance and volume migration](https://linuxcontainers.org/incus/docs/main/howto/storage_move_volume/)
+- [Incus image handling and cache](https://linuxcontainers.org/incus/docs/main/image-handling/)
 - Tailscale: https://tailscale.com/kb/
 - Caddy: https://caddyserver.com/docs/
 - Nextcloud AIO: https://github.com/nextcloud/all-in-one
@@ -759,7 +1098,7 @@ incus exec build-base-<timestamp> -- cat /var/log/cloud-init-output.log
 - Ollama: https://github.com/ollama/ollama
 - OpenWebUI: https://docs.openwebui.com/
 - vendor-reset: https://github.com/gnif/vendor-reset
-- restic / borg / rclone — user's existing toolchain
+- The backup tools and providers selected for this installation
 
 ---
 

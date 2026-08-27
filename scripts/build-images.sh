@@ -47,6 +47,19 @@ done
 command -v incus >/dev/null 2>&1 || die "incus CLI not found in PATH."
 [[ -n "${UBUNTU_REMOTE:-}" ]]    || die "UBUNTU_REMOTE not set in config.env."
 [[ -n "${BASE_IMAGE:-}"    ]]    || die "BASE_IMAGE not set in config.env."
+[[ -n "${INCUS_STORAGE_POOL:-}" ]] \
+  || die "INCUS_STORAGE_POOL not set in config.env."
+
+incus storage show "$INCUS_STORAGE_POOL" >/dev/null 2>&1 \
+  || die "Incus storage pool '$INCUS_STORAGE_POOL' does not exist."
+
+PROFILE_STORAGE_POOL=$(incus profile device get default root pool 2>/dev/null || true)
+[[ "$PROFILE_STORAGE_POOL" == "$INCUS_STORAGE_POOL" ]] \
+  || die "Default profile root uses '${PROFILE_STORAGE_POOL:-no pool}', expected '$INCUS_STORAGE_POOL'."
+
+IMAGE_TARBALL_VOLUME=$(incus config get storage.images_volume)
+[[ "$IMAGE_TARBALL_VOLUME" == "${INCUS_STORAGE_POOL}/"* ]] \
+  || die "Incus storage.images_volume is '${IMAGE_TARBALL_VOLUME:-unset}'. Configure it on '$INCUS_STORAGE_POOL' before building."
 
 # ── Image alias helpers ───────────────────────────────────────────────────────
 alias_exists() {
@@ -75,6 +88,7 @@ build_and_publish() {
   step "Launching build instance: $instance (from $source_image)"
   incus launch "$source_image" "$instance" \
     --vm \
+    --storage "$INCUS_STORAGE_POOL" \
     --config limits.cpu=4 \
     --config limits.memory=4GiB \
     --device "root,size=${disk_size}" \

@@ -30,7 +30,7 @@ load_config "$ROOT_DIR/config.env"
 die()   { echo "ERROR: $*" >&2; exit 1; }
 usage() { sed -n '2,22p' "$0"; exit 1; }
 
-# Catch typos like  `./new-jupyter-container.sh marc jupyter extra`
+# Catch typos like  `./new-jupyter-container.sh adminuser jupyter extra`
 (( $# >= 1 && $# <= 2 )) \
   || die "Expected 1 or 2 arguments (admin-username [container-name]); got $#."
 

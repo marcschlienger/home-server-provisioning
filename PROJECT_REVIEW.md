@@ -1,6 +1,6 @@
 # Project Review
 
-Review date: 2026-08-04
+Review date: 2026-08-27
 
 Scope reviewed:
 - `README.md`
@@ -16,20 +16,30 @@ Scope reviewed:
 
 Checks run:
 - `shellcheck -x scripts/*.sh` passed.
-- `docker compose -f compose/nextcloud-aio.compose.yaml config` passed.
+- The Compose file and documented Incus preseed both passed YAML parsing.
+  `docker compose config` was not rerun in the review workspace because the
+  Docker CLI was unavailable; the Compose file itself was not changed.
 - `bash -n scripts/build-images.sh scripts/lib.sh scripts/new-agent-vm.sh scripts/new-jupyter-container.sh scripts/new-latex-vm.sh scripts/new-ollama-vm.sh scripts/validate-cloud-init.sh` passed.
 - `./scripts/validate-cloud-init.sh` passed: 22 passed, 0 failed.
-- GitHub readiness scan passed: local `.DS_Store` and generated Gemini note were removed, and no real secret patterns were found.
+- Documentation links to tracked files resolve.
+- Privacy scan found no real hostnames, personal operational usernames,
+  domains, IP addresses, repository URLs, or auth keys. The only personal name
+  retained is the copyright attribution in `LICENSE`.
 - `LICENSE` is present and declares the MIT License.
 
 Live Incus image builds, VM launches, container launches, package installs, and
 GPU passthrough were not executed during this static review. The Nextcloud AIO
-Compose file was rendered with `docker compose config`, but the stack was not
-started.
+stack was not started.
 
 ## Current Findings
 
-No current bugs or GitHub-readiness issues remain from this static review.
+No current documentation or GitHub-readiness issues remain from this static
+review. The rebuild path now creates separate LVM filesystems for root and
+Incus, relocates daemon-wide image and backup tarballs as well as instance
+disks, and documents recovery from a root-backed pool. Instance logs are also
+relocated when the installed Incus advertises that capability. Image builds
+fail their preflight when the default profile or daemon-wide image store is not
+on the configured Incus pool.
 
 ## Accepted Tradeoffs
 
@@ -56,11 +66,22 @@ The LaTeX VM, agent VM, Ollama VM, and Jupyter container have different images,
 lifecycle behavior, mounts, and access patterns. Keeping separate scripts is
 simpler than hiding those differences behind one generic launcher.
 
+### Incus uses the `dir` storage driver on dedicated ext4
+
+The `dir` driver is less feature-rich and slower for copies and snapshots than
+LVM-thin or ZFS. It is retained because it matches the ext4-based host, is easy
+to inspect and recover, and the dedicated `incus-lv` still provides the
+important capacity boundary from root. Daemon-wide images, backups, and logs
+are redirected to custom volumes on the same pool when supported by the
+installed Incus version; image and backup relocation are required.
+
 ## Residual Verification Limits
 
 This review validates shell syntax, ShellCheck, YAML parsing, template
 rendering, placeholder replacement, and documentation consistency. It does not
 prove that:
+- A fresh `incus admin init --preseed` completes on the target host without an
+  existing Incus configuration.
 - Incus can launch the configured images/containers on the target host.
 - External installer scripts are reachable during first boot.
 - TLJH, Ollama, Docker, and OpenWebUI complete successfully on live instances.

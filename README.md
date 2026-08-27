@@ -6,6 +6,10 @@ Incus-based provisioning for a personal Ubuntu Server 26.04 home server.
 container), Ollama + OpenWebUI (Incus VM), persistent LaTeX workspace (Incus
 VM), persistent agent sandboxes (Incus VMs with Claude Code / Codex / Pi).
 
+The NVMe uses separate LVM filesystems for the host and Incus. This is a
+deliberate availability boundary: a VM image build can fill the Incus
+filesystem without preventing Caddy, Docker, or the host from writing to `/`.
+
 ## Start here
 
 - **[`SETUP.md`](./SETUP.md)** — full architecture, disaster-recovery
@@ -37,6 +41,10 @@ All checks should pass.
 
 - `config.env` contains tracked defaults only. Keep real private values in
   `config.env.local`, which is ignored by Git.
+- Documentation and tracked examples use placeholders rather than real
+  usernames, hostnames, domains, IP addresses, repository URLs, or auth keys.
+- Preserve legal attribution in `LICENSE`; do not copy its identity into
+  operational examples where it is not needed.
 - The fixed VM login `admin` / `admin` is intentionally host-private on the
   Incus bridge; do not expose VM SSH publicly.
 - Licensed under the MIT License. See `LICENSE`.
