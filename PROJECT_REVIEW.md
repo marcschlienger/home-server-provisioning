@@ -47,25 +47,20 @@ review. Fixes implemented in this pass:
 - Re-entry validates any repeated `--git` path, handles frozen VMs, waits for
   cloud-init, and reports bootstrap failures instead of silently entering an
   incomplete VM.
-- The LaTeX image now derives from the agents image, matching the documented
-  availability of Claude Code, Codex, and Pi. Image and first-boot checks fail
-  if any advertised agent package or executable is absent. A single image-baked
-  contract check runs after the agents build, after the LaTeX build, on first
-  boot, and on re-entry. Validation executes each CLI rather than merely
-  checking that its launcher exists.
+- The LaTeX image derives from the agents image and inherits Node.js 22, native
+  Claude, and the Codex/Pi installer scripts. Image builds validate those stable
+  prerequisites. Codex and Pi install once in each workspace VM's writable
+  filesystem; first boot and re-entry execute every advertised CLI rather than
+  merely checking that a launcher exists.
 - Agent images now use Ubuntu's Node 22 packages instead of NodeSource. The
   agents build removes stale NodeSource state first, so an older base containing
   Node 24 cannot silently defeat the compatibility constraint. Claude uses
   Anthropic's signed stable APT channel, Codex uses its supported standalone
   installer, and Pi uses its official installer rather than direct npm commands.
-  Pi is explicitly installed under `/usr/local`, outside APT-owned paths. The
-  LaTeX build refreshes Codex and Pi after the TeX package transaction; this
-  prevents the inherited Codex payload from remaining in its observed
-  post-transaction segfaulting state and restores Pi before final validation.
-  First boot and re-entry also recreate Pi's npm-generated launcher from the
-  installed package metadata if the package survived but its bin link did not,
-  and rewrite a non-running Codex payload into the instance layer before falling
-  back to a fresh standalone install.
+  Their payloads are intentionally excluded from published images and installed
+  only during workspace first boot. Pi is explicitly installed under
+  `/usr/local`, outside APT-owned paths. This replaces the previous post-TeX and
+  first-boot repair stack with one installation point and one full verification.
 - Image builds run the complete cloud-init validator before launching Incus, so
   YAML, `runcmd` type, and placeholder errors fail locally without creating a
   broken build instance.
@@ -122,12 +117,12 @@ installed Incus version; image and backup relocation are required.
 
 The Codex standalone payload repeatedly ran in an image-build VM but segfaulted
 after both derivation and fresh instance launch; Pi's package survived while its
-generated bin link did not. The launch lifecycle now repairs both cases. A
-separate host-level investigation should compare checksums and extents across
-the build instance, published image, and launched instance, then review the
-Incus version, storage driver, backing filesystem health, and relevant upstream
-issues. That may remove the need for the launch repair, but changing the storage
-stack is outside this repository fix.
+generated bin link did not. Workspace payloads now avoid image boundaries
+entirely, so functionality no longer depends on diagnosing this behavior. A
+separate host-level investigation could still compare checksums and extents
+across build and launched instances, then review the Incus version, storage
+driver, backing filesystem health, and relevant upstream issues. Changing the
+storage stack is outside this repository simplification.
 
 ### Replace the fixed VM password
 
@@ -165,8 +160,8 @@ export or backup policy instead of treating every VM as reconstructible.
 ## Residual Verification Limits
 
 This review validates shell syntax, ShellCheck, YAML parsing, template
-rendering, placeholder replacement, and documentation consistency. It does not
-prove that:
+rendering, placeholder replacement, the agent image/first-boot install boundary,
+and documentation consistency. It does not prove that:
 - A fresh `incus admin init --preseed` completes on the target host without an
   existing Incus configuration.
 - Incus can launch the configured images/containers on the target host.

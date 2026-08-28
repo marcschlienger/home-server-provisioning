@@ -229,20 +229,9 @@ verify_workspace_bootstrap() {
     echo "       Fix DOTFILES_REPO, then recreate this VM." >&2
     return 1
   fi
-  # New workspace VMs receive these repairs through launch-init. Run them again
-  # on re-entry before checking the CLI contract.
-  local repair
-  for repair in repair-codex-cli repair-pi-launcher; do
-    if incus exec "$instance" -- test -x "/usr/local/sbin/$repair"; then
-      if ! incus exec "$instance" -- "/usr/local/sbin/$repair"; then
-        echo "ERROR: '$instance' failed $repair." >&2
-        return 1
-      fi
-    fi
-  done
   if ! incus exec "$instance" -- /usr/local/sbin/verify-agent-clis >/dev/null; then
     echo "ERROR: '$instance' failed the agent CLI contract (Node 22, Claude, Codex, Pi)." >&2
-    echo "       Rebuild the agents/LaTeX images as needed, then recreate this VM." >&2
+    echo "       Rebuild images for Node/Claude; rerun the instance installers for Codex/Pi." >&2
     return 1
   fi
 }

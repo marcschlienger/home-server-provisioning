@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # build-images.sh — builds ubuntu-base, ubuntu-agents, and ubuntu-latex images
-# in dependency order. LaTeX derives from agents so its workspaces include the
-# three agent CLIs documented in SETUP.md.
+# in dependency order. LaTeX derives from agents so it inherits Node, Claude,
+# and the scripts that install Codex and Pi once during workspace first boot.
 #
 # Usage:
 #   ./build-images.sh                # build all three (base → agents → latex)

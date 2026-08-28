@@ -602,26 +602,34 @@ Notes:
 ```
 
 Images build in dependency order: base → agents → LaTeX. The LaTeX image
-derives from the agents image so worksheet VMs contain `claude`, `codex`, and
-`pi` as well as TeX. Expected timing is base ~10 min, agents ~5 min, and LaTeX
-~30-40 min (texlive-full): roughly 50 min total for the first run.
+derives from the agents image so it carries Node.js 22, native Claude, and the
+small Codex/Pi installer scripts as well as TeX. Expected timing is base ~10
+min, agents ~5 min, and LaTeX ~30-40 min (texlive-full): roughly 50 min total
+for the first run.
 
 Claude Code is installed as a native system package from Anthropic's signed
 stable APT channel. Codex uses its official standalone installer, avoiding
 npm's platform-specific package failure mode. Pi uses its official installer;
 that installer is still npm-backed and therefore keeps Ubuntu's Node.js 22 and
-npm packages as Pi dependencies. Pi's npm prefix is fixed at `/usr/local` so
-APT cannot replace its launcher. The LaTeX build refreshes Codex and Pi after
-the large TeX package transaction, then one shared runtime check validates
-Node, Claude, Codex, and Pi in both images and every workspace VM.
-First-boot initialization and later re-entry also reconstruct Pi's launcher
-from its installed package metadata if npm's generated link was lost during
-the image lifecycle; this local repair does not download or reinstall Pi.
-They similarly rewrite a non-running Codex payload into the VM's writable
-layer, falling back to a fresh official standalone install only if the local
-rewrite still cannot run.
+npm packages as Pi dependencies. Codex and Pi are deliberately not baked into
+published images. Each workspace installs them once during first boot, directly
+into its writable filesystem; Pi's npm prefix is fixed at `/usr/local`.
+Image builds validate Node and Claude, while first boot and every re-entry
+validate the complete Node, Claude, Codex, and Pi stack. New workspace creation
+therefore takes a little longer and requires internet access, which is already
+required for UV and dotfiles.
 Package-manager Claude installations do not self-update; a later image rebuild
 picks up the then-current stable package.
+
+Existing VMs are independent of later image rebuilds:
+
+- Keep a VM if `cloud-init status --long` reports `done` and
+  `/usr/local/sbin/verify-agent-clis` succeeds. It needs no migration.
+- A VM whose first boot ended with `status: error` keeps that failed cloud-init
+  state and old user-data. Preserve any VM-local files you need, then delete and
+  recreate it; the host-mounted `/home/admin/project` is already outside the VM.
+- Rebuilding an image changes only newly created VMs. It never modifies or
+  repairs an existing VM.
 
 Subsequent rebuilds of one image only:
 ```bash
@@ -1141,7 +1149,17 @@ incus exec latex-ws -- tail -n 100 /var/log/cloud-init-output.log
 incus exec latex-ws -- sh -c 'ls -ld /home/admin/.dotfiles; command -v claude codex pi'
 ```
 
-After correcting `DOTFILES_REPO`, rebuild the dependency chain:
+For a VM whose cloud-init status is `done`, the instance-local agent installers
+can be rerun safely and then verified:
+
+```bash
+incus exec latex-ws -- /usr/local/sbin/install-codex-cli
+incus exec latex-ws -- /usr/local/sbin/install-pi-cli
+incus exec latex-ws -- /usr/local/sbin/verify-agent-clis
+```
+
+If cloud-init reports `error`, recreate the VM instead. Rebuild the dependency
+chain first only when the published images themselves are old:
 
 ```bash
 ./scripts/build-images.sh --only agents
@@ -1205,9 +1223,9 @@ home-server-provisioning/
 │   └── nextcloud-aio.compose.yaml     ← AIO mastercontainer config
 ├── cloud-init/
 │   ├── build-base.yaml               ← system tools (NO Tailscale)
-│   ├── build-agents.yaml             ← +Claude Code, Codex, Pi
-│   ├── build-latex.yaml              ← agents + texlive-full + PDF tools
-│   ├── launch-init.yaml.tpl          ← LaTeX & agent VMs: password SSH + dotfiles (no TS)
+│   ├── build-agents.yaml             ← +Node 22, Claude, Codex/Pi installers
+│   ├── build-latex.yaml              ← agent prerequisites + TeX/PDF tools
+│   ├── launch-init.yaml.tpl          ← VM user, dotfiles, Codex/Pi first boot
 │   ├── launch-jupyter.yaml.tpl      ← Jupyter container: optional TS + TLJH
 │   └── launch-ollama.yaml.tpl       ← Ollama VM: password SSH + Ollama + Docker + OpenWebUI
 └── scripts/

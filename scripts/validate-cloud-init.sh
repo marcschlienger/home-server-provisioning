@@ -143,6 +143,42 @@ check_no_placeholders() {
   fi
 }
 
+check_agent_install_boundary() {
+  local valid=true
+  local file runcmd
+
+  for file in "$CI_DIR/build-agents.yaml" "$CI_DIR/build-latex.yaml"; do
+    runcmd=$(sed -n '/^runcmd:/,$p' "$file")
+    if grep -Fq '/usr/local/sbin/install-codex-cli' <<< "$runcmd" \
+       || grep -Fq '/usr/local/sbin/install-pi-cli' <<< "$runcmd" \
+       || ! grep -Fq '/usr/local/sbin/verify-agent-clis --prerequisites' <<< "$runcmd"; then
+      valid=false
+    fi
+  done
+
+  if ! awk '
+    /^runcmd:/ { in_runcmd = 1; next }
+    in_runcmd && $0 == "  - /usr/local/sbin/install-codex-cli" { codex = NR }
+    in_runcmd && $0 == "  - /usr/local/sbin/install-pi-cli" { pi = NR }
+    in_runcmd && $0 == "  - /usr/local/sbin/verify-agent-clis" { verify = NR }
+    END { exit !(codex && pi && verify && codex < pi && pi < verify) }
+  ' "$CI_DIR/launch-init.yaml.tpl"; then
+    valid=false
+  fi
+
+  if grep -Eq 'repair-(codex|pi)' "$CI_DIR/launch-init.yaml.tpl"; then
+    valid=false
+  fi
+
+  if [[ "$valid" == true ]]; then
+    echo "  PASS  agent install boundary  (images: prerequisites; first boot: Codex + Pi)"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  agent install boundary  (Codex/Pi must install only during first boot)"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 # ── Pass A: checked-in files (templates intentionally have placeholders, ─────
 # so only YAML-parse those; build files should also have no __ markers) ──────
 echo "==> Validating checked-in cloud-init files..."
@@ -159,6 +195,8 @@ for f in "$CI_DIR"/launch-*.yaml.tpl; do
   check_yaml "$(basename "$f")  (raw template, placeholders OK)" "$f"
   check_runcmd_shape "$(basename "$f")  (raw template, placeholders OK)" "$f"
 done
+
+check_agent_install_boundary
 
 # ── Pass B: generate with SAMPLE values ──────────────────────────────────────
 echo ""

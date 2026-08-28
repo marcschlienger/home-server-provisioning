@@ -1,7 +1,7 @@
 #cloud-config
 # =============================================================================
-# LaTeX image build — runs on top of ubuntu-agents so workspaces also contain
-# Claude Code, Codex, and Pi as documented.
+# LaTeX image build — runs on top of ubuntu-agents so workspaces inherit Node,
+# native Claude, and the Codex/Pi first-boot installers.
 # texlive-full is ~5 GB and takes 20–40 min to install; this is expected.
 # =============================================================================
 
@@ -27,15 +27,8 @@ runcmd:
 
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 
-  # On Ubuntu 26.04, the large TeX package transaction made the inherited
-  # Codex musl payload segfault. A verified fresh install after that transaction
-  # fixed it. Refresh Pi too so its launcher is guaranteed to live in
-  # /usr/local rather than an APT-owned /usr path.
-  - /usr/local/sbin/install-codex-cli --fresh
-  - /usr/local/sbin/install-pi-cli
-
-  # Validate the final derived artifact rather than assuming every executable
-  # from the agents image survived the large TeX installation unchanged.
-  - /usr/local/sbin/verify-agent-clis
+  # Validate only what is deliberately baked into the image. Codex and Pi are
+  # installed and fully checked in each workspace VM during first boot.
+  - /usr/local/sbin/verify-agent-clis --prerequisites
 
 final_message: "LaTeX image build complete."
