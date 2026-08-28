@@ -11,7 +11,7 @@
 #   1. Ensure the fixed admin VM login user exists
 #   2. Enable password SSH for that user (admin/admin)
 #   3. Clone + apply dotfiles
-#   4. Restore Pi's npm-generated launcher if it is absent on first boot
+#   4. Repair agent launchers/payloads affected by the image lifecycle
 #
 # Placeholders substituted by the launch scripts before launch:
 #   __DOTFILES_REPO__    git URL of dotfiles repo (may be empty)
@@ -24,6 +24,36 @@
 no_ssh_fingerprints: true
 
 write_files:
+  # The large Codex standalone payload has repeatedly passed in the image-build
+  # VM and then segfaulted in a newly launched VM. First rewrite the same bytes
+  # into the instance's writable layer. Fall back to the image-baked official
+  # installer only if that local repair does not make the binary executable.
+  - path: /usr/local/sbin/repair-codex-cli
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+
+      if timeout 30 codex --version >/dev/null 2>&1; then
+        exit 0
+      fi
+
+      codex_path=$(readlink -f /usr/local/bin/codex 2>/dev/null || true)
+      if [ -n "$codex_path" ] && [ -x "$codex_path" ]; then
+        rewritten=$(mktemp "${codex_path}.rewrite.XXXXXX")
+        trap 'rm -f "$rewritten"' EXIT HUP INT TERM
+        if cp --reflink=never --preserve=mode "$codex_path" "$rewritten"; then
+          mv -f "$rewritten" "$codex_path"
+          trap - EXIT HUP INT TERM
+          if timeout 30 codex --version >/dev/null 2>&1; then
+            exit 0
+          fi
+        fi
+      fi
+
+      echo "Codex local rewrite did not recover the CLI; installing a fresh payload." >&2
+      /usr/local/sbin/install-codex-cli --fresh
+
   # Pi's package survives the image lifecycle, but its npm-generated bin link
   # can be absent in a newly launched VM. Recreate it from the installed
   # package metadata; this is deterministic and needs no network reinstall.
@@ -116,6 +146,7 @@ runcmd:
          'cd ~/.dotfiles && __INSTALL_CMD__';
     fi
   - test -d /home/admin/.dotfiles
+  - /usr/local/sbin/repair-codex-cli
   - /usr/local/sbin/repair-pi-launcher
   - /usr/local/sbin/verify-agent-clis
 

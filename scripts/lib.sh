@@ -229,14 +229,17 @@ verify_workspace_bootstrap() {
     echo "       Fix DOTFILES_REPO, then recreate this VM." >&2
     return 1
   fi
-  # New workspace VMs receive this deterministic, offline repair through
-  # launch-init. Run it again on re-entry before checking the CLI contract.
-  if incus exec "$instance" -- test -x /usr/local/sbin/repair-pi-launcher; then
-    if ! incus exec "$instance" -- /usr/local/sbin/repair-pi-launcher; then
-      echo "ERROR: '$instance' could not restore the Pi launcher." >&2
-      return 1
+  # New workspace VMs receive these repairs through launch-init. Run them again
+  # on re-entry before checking the CLI contract.
+  local repair
+  for repair in repair-codex-cli repair-pi-launcher; do
+    if incus exec "$instance" -- test -x "/usr/local/sbin/$repair"; then
+      if ! incus exec "$instance" -- "/usr/local/sbin/$repair"; then
+        echo "ERROR: '$instance' failed $repair." >&2
+        return 1
+      fi
     fi
-  fi
+  done
   if ! incus exec "$instance" -- /usr/local/sbin/verify-agent-clis >/dev/null; then
     echo "ERROR: '$instance' failed the agent CLI contract (Node 22, Claude, Codex, Pi)." >&2
     echo "       Rebuild the agents/LaTeX images as needed, then recreate this VM." >&2

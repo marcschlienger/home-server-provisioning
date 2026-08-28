@@ -617,6 +617,9 @@ Node, Claude, Codex, and Pi in both images and every workspace VM.
 First-boot initialization and later re-entry also reconstruct Pi's launcher
 from its installed package metadata if npm's generated link was lost during
 the image lifecycle; this local repair does not download or reinstall Pi.
+They similarly rewrite a non-running Codex payload into the VM's writable
+layer, falling back to a fresh official standalone install only if the local
+rewrite still cannot run.
 Package-manager Claude installations do not self-update; a later image rebuild
 picks up the then-current stable package.
 

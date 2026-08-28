@@ -63,7 +63,9 @@ review. Fixes implemented in this pass:
   prevents the inherited Codex payload from remaining in its observed
   post-transaction segfaulting state and restores Pi before final validation.
   First boot and re-entry also recreate Pi's npm-generated launcher from the
-  installed package metadata if the package survived but its bin link did not.
+  installed package metadata if the package survived but its bin link did not,
+  and rewrite a non-running Codex payload into the instance layer before falling
+  back to a fresh standalone install.
 - Image builds run the complete cloud-init validator before launching Incus, so
   YAML, `runcmd` type, and placeholder errors fail locally without creating a
   broken build instance.
@@ -115,6 +117,17 @@ are redirected to custom volumes on the same pool when supported by the
 installed Incus version; image and backup relocation are required.
 
 ## Possible Larger Improvements (Not Implemented)
+
+### Investigate Incus image-layer executable behavior
+
+The Codex standalone payload repeatedly ran in an image-build VM but segfaulted
+after both derivation and fresh instance launch; Pi's package survived while its
+generated bin link did not. The launch lifecycle now repairs both cases. A
+separate host-level investigation should compare checksums and extents across
+the build instance, published image, and launched instance, then review the
+Incus version, storage driver, backing filesystem health, and relevant upstream
+issues. That may remove the need for the launch repair, but changing the storage
+stack is outside this repository fix.
 
 ### Replace the fixed VM password
 
