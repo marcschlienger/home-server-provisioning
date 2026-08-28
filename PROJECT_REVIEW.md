@@ -66,6 +66,9 @@ review. Fixes implemented in this pass:
 - Every cloud-init `runcmd` script now enables fail-fast behavior. Download
   pipelines were replaced with checked temporary files so a failed download or
   validation cannot be hidden by the exit status of a later command.
+- VM launch templates suppress cloud-init's unused authorized-key fingerprint
+  module because the default `ubuntu` user has been renamed before that module
+  runs and these VMs intentionally provision no authorized SSH keys.
 
 ## Accepted Tradeoffs
 

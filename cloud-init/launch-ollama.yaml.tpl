@@ -11,6 +11,11 @@
 #   __INSTALL_CMD__        dotfiles apply command (e.g. stow .)
 # =============================================================================
 
+# The Ubuntu default user is renamed to admin during scripts-user. Disable the
+# following authorized-key fingerprint step, which has no keys to report and
+# would otherwise look up the now-absent ubuntu user.
+no_ssh_fingerprints: true
+
 runcmd:
   - set -e
 

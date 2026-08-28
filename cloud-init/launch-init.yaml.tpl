@@ -17,6 +17,11 @@
 #   __INSTALL_CMD__      command to apply dotfiles (default: stow .)
 # =============================================================================
 
+# The Ubuntu default user is renamed to admin during scripts-user. The next
+# cloud-init module would otherwise try to inspect the now-absent ubuntu user.
+# These VMs provision no authorized SSH keys, so fingerprint logging is unused.
+no_ssh_fingerprints: true
+
 runcmd:
   - set -e
 
