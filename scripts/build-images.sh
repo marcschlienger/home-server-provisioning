@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# build-images.sh — builds ubuntu-base, ubuntu-latex, and ubuntu-agents images
-# in sequence. Each step publishes to local: so the next step can use it.
+# build-images.sh — builds ubuntu-base, ubuntu-agents, and ubuntu-latex images
+# in dependency order. LaTeX derives from agents so its workspaces include the
+# three agent CLIs documented in SETUP.md.
 #
 # Usage:
-#   ./build-images.sh                # build all three (base → latex → agents)
+#   ./build-images.sh                # build all three (base → agents → latex)
 #   ./build-images.sh --only base    # rebuild only base
-#   ./build-images.sh --only latex   # rebuild only latex (requires base)
+#   ./build-images.sh --only latex   # rebuild only latex (requires agents)
 #   ./build-images.sh --only agents  # rebuild only agents (requires base)
 #
-# Expected runtime: base ~10 min, latex ~30-40 min, agents ~5 min.
+# Expected runtime: base ~10 min, agents ~5 min, latex ~30-40 min.
 #
 # Re-runs publish the new image to a temporary alias (<name>-new), then promote
 # it to the canonical alias only AFTER the publish succeeds. If promotion fails,
@@ -146,18 +147,23 @@ need_base() {
     || die "$BASE_IMAGE not found. Build it first: ./build-images.sh --only base"
 }
 
+need_agents() {
+  incus image info "$AGENTS_IMAGE" &>/dev/null \
+    || die "$AGENTS_IMAGE not found. Build it first: ./build-images.sh --only agents"
+}
+
 # ── Build sequence ────────────────────────────────────────────────────────────
 case "$ONLY" in
   ""|"all")
     build_and_publish "build-base-$TIMESTAMP"   "$BASE_IMAGE"   \
       "$CLOUD_INIT_DIR/build-base.yaml"   "$UBUNTU_REMOTE" "30GiB"
 
-    step "Building LaTeX image — texlive-full takes 20-40 min, please be patient."
-    build_and_publish "build-latex-$TIMESTAMP"  "$LATEX_IMAGE"  \
-      "$CLOUD_INIT_DIR/build-latex.yaml"  "$BASE_IMAGE"    "60GiB"
-
     build_and_publish "build-agents-$TIMESTAMP" "$AGENTS_IMAGE" \
       "$CLOUD_INIT_DIR/build-agents.yaml" "$BASE_IMAGE"    "30GiB"
+
+    step "Building LaTeX image — texlive-full takes 20-40 min, please be patient."
+    build_and_publish "build-latex-$TIMESTAMP"  "$LATEX_IMAGE"  \
+      "$CLOUD_INIT_DIR/build-latex.yaml"  "$AGENTS_IMAGE"  "60GiB"
     ;;
 
   "base")
@@ -166,10 +172,10 @@ case "$ONLY" in
     ;;
 
   "latex")
-    need_base
+    need_agents
     step "Building LaTeX image — texlive-full takes 20-40 min, please be patient."
     build_and_publish "build-latex-$TIMESTAMP" "$LATEX_IMAGE" \
-      "$CLOUD_INIT_DIR/build-latex.yaml" "$BASE_IMAGE" "60GiB"
+      "$CLOUD_INIT_DIR/build-latex.yaml" "$AGENTS_IMAGE" "60GiB"
     ;;
 
   "agents")

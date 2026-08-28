@@ -1,6 +1,7 @@
 #cloud-config
 # =============================================================================
-# LaTeX image build — runs on top of ubuntu-base.
+# LaTeX image build — runs on top of ubuntu-agents so workspaces also contain
+# Claude Code, Codex, and Pi as documented.
 # texlive-full is ~5 GB and takes 20–40 min to install; this is expected.
 # =============================================================================
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# new-jupyter-container.sh — launch an Incus SYSTEM CONTAINER running TLJH
+# jupyter-container.sh — launch an Incus SYSTEM CONTAINER running TLJH
 # (The Littlest JupyterHub).
 #
 # Usage:
-#   ./new-jupyter-container.sh <admin-username> [container-name]
+#   ./jupyter-container.sh <admin-username> [container-name]
 #
 # Arguments:
 #   admin-username   first JupyterHub admin user. You set the password on
@@ -28,9 +28,14 @@ source "$SCRIPT_DIR/lib.sh"
 load_config "$ROOT_DIR/config.env"
 
 die()   { echo "ERROR: $*" >&2; exit 1; }
-usage() { sed -n '2,22p' "$0"; exit 1; }
+usage() { sed -n '2,22p' "$0"; }
 
-# Catch typos like  `./new-jupyter-container.sh adminuser jupyter extra`
+if (( $# == 1 )) && [[ "$1" == "-h" || "$1" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+# Catch typos like  `./jupyter-container.sh adminuser jupyter extra`
 (( $# >= 1 && $# <= 2 )) \
   || die "Expected 1 or 2 arguments (admin-username [container-name]); got $#."
 
@@ -57,26 +62,30 @@ USER_DATA=$(render_template_checked "$ROOT_DIR/cloud-init/launch-jupyter.yaml.tp
 
 echo "==> Launching Jupyter system container: $NAME (admin user: $ADMIN_USER)"
 incus launch "$UBUNTU_REMOTE" "$NAME" \
+  --storage "$INCUS_STORAGE_POOL" \
   --config "limits.cpu=${JUPYTER_CT_CPU}" \
   --config "limits.memory=${JUPYTER_CT_RAM}" \
   --device "root,size=${JUPYTER_CT_DISK}" \
   --config "user.user-data=${USER_DATA}"
 
 echo ""
-echo "Container '$NAME' is starting. TLJH bootstrap takes ~10 min."
-echo ""
-echo "Watch progress:"
-echo "  incus exec $NAME -- tail -f /var/log/cloud-init-output.log"
+echo "Container '$NAME' is starting. Waiting for the TLJH bootstrap (~10 min)..."
+wait_for_instance "$NAME" 600 \
+  || die "Container did not become reachable."
+wait_for_cloud_init "$NAME" \
+  || die "TLJH cloud-init failed; see the log above."
+clear_instance_user_data "$NAME"
+echo "Container '$NAME' is ready."
 echo ""
 if [[ -n "${JUPYTER_TS_AUTHKEY:-}" ]]; then
-  echo "When ready, visit from a Tailscale-connected device:"
+  echo "Visit from a Tailscale-connected device:"
   echo "  http://$NAME/"
   echo ""
   echo "Local Incus fallback:"
   echo "  incus list $NAME"
   echo "  http://<container-ip>/"
 else
-  echo "When ready, get the container IP:"
+  echo "Get the container IP:"
   echo "  incus list $NAME"
   echo ""
   echo "Then visit:"

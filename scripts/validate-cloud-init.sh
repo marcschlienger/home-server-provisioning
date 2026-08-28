@@ -65,7 +65,7 @@ check_yaml() {
 # Like check_yaml, but DOES NOT print file contents on failure — use for
 # generations driven by potentially-secret values (default-config pass).
 # The parser error message itself is safe; the file body might contain
-# a private dotfiles URL from config.env.local.
+# a real dotfiles URL from config.env.local.
 check_yaml_quiet() {
   local label="$1"
   local file="$2"

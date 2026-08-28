@@ -1,6 +1,6 @@
 # Project Review
 
-Review date: 2026-08-27
+Review date: 2026-08-28
 
 Scope reviewed:
 - `README.md`
@@ -19,8 +19,11 @@ Checks run:
 - The Compose file and documented Incus preseed both passed YAML parsing.
   `docker compose config` was not rerun in the review workspace because the
   Docker CLI was unavailable; the Compose file itself was not changed.
-- `bash -n scripts/build-images.sh scripts/lib.sh scripts/new-agent-vm.sh scripts/new-jupyter-container.sh scripts/new-latex-vm.sh scripts/new-ollama-vm.sh scripts/validate-cloud-init.sh` passed.
+- `bash -n scripts/*.sh` passed.
 - `./scripts/validate-cloud-init.sh` passed: 22 passed, 0 failed.
+- Launch-script help paths exit successfully without requiring Incus.
+- Static lifecycle assertions confirm `incus init` precedes VirtioFS device
+  attachment and `incus start` in both workspace VM scripts.
 - Documentation links to tracked files resolve.
 - Privacy scan found no real hostnames, personal operational usernames,
   domains, IP addresses, repository URLs, or auth keys. The only personal name
@@ -33,13 +36,28 @@ stack was not started.
 
 ## Current Findings
 
-No current documentation or GitHub-readiness issues remain from this static
-review. The rebuild path now creates separate LVM filesystems for root and
-Incus, relocates daemon-wide image and backup tarballs as well as instance
-disks, and documents recovery from a root-backed pool. Instance logs are also
-relocated when the installed Incus advertises that capability. Image builds
-fail their preflight when the default profile or daemon-wide image store is not
-on the configured Incus pool.
+No further obvious correctness or documentation bugs remain from this static
+review. Fixes implemented in this pass:
+
+- Renamed the four `new-*` scripts without the misleading prefix.
+- Workspace VMs are initialized stopped, receive their VirtioFS project device,
+  and only then start. Failed attachment or first start removes the incomplete
+  VM.
+- Re-entry validates any repeated `--git` path, handles frozen VMs, waits for
+  cloud-init, and reports bootstrap failures instead of silently entering an
+  incomplete VM.
+- The LaTeX image now derives from the agents image, matching the documented
+  availability of Claude Code, Codex, and Pi. Image and first-boot checks fail
+  if any advertised agent executable is absent.
+- Dotfiles URLs that cannot work without guest credentials are rejected before
+  launch; first boot fails clearly if cloning or installation does not finish.
+- First-boot user migration now remains correct when the pre-attached VirtioFS
+  mount has already created `/home/admin`.
+- Jupyter and Ollama launchers wait for successful cloud-init. One-shot
+  user-data is removed from Incus configuration after successful bootstrap.
+- Storage selection is explicit for every launched instance; help exits with
+  success; bind-mount ownership warnings inspect the directory rather than the
+  unrelated invoking account; download commands now fail on HTTP errors.
 
 ## Accepted Tradeoffs
 
@@ -53,12 +71,6 @@ The fixed admin user creation, sudo setup, password SSH setup, and optional
 dotfiles bootstrap are duplicated between the general VM launch template and the
 Ollama launch template. This is intentionally accepted because the templates
 diverge after bootstrap and the duplication is small enough to keep explicit.
-
-### VM login is fixed as `admin` / `admin`
-
-This is intentionally accepted because VM SSH is only meant for host-local
-access over the private Incus bridge. The host remains the real security
-boundary.
 
 ### Separate launch scripts stay separate
 
@@ -74,6 +86,40 @@ to inspect and recover, and the dedicated `incus-lv` still provides the
 important capacity boundary from root. Daemon-wide images, backups, and logs
 are redirected to custom volumes on the same pool when supported by the
 installed Incus version; image and backup relocation are required.
+
+## Possible Larger Improvements (Not Implemented)
+
+### Replace the fixed VM password
+
+Prefer `incus exec` only, or provision per-host SSH public keys and disable
+password authentication. This changes the access and recovery model, so it was
+not folded into a lifecycle bug-fix pass.
+
+### Pin and verify external software
+
+Several builds intentionally track moving inputs: the Ubuntu image alias,
+Node.js LTS installer, latest `yq`, npm packages, TLJH and Ollama installers,
+OpenWebUI `main`, and the Nextcloud AIO `latest` image. Pinning versions and
+checksums would improve reproducibility and supply-chain control but requires a
+deliberate update policy.
+
+### Support private dotfiles securely
+
+The current design supports anonymously readable HTTPS repositories only.
+Private repositories need a one-shot credential mechanism that neither embeds a
+token in Incus configuration nor leaves a private key in the guest.
+
+### Add live Incus integration tests
+
+A disposable test project could build minimal images and prove device ordering,
+cloud-init reruns, UID/GID behavior, failure cleanup, and re-entry against a real
+daemon. Static shell/YAML checks cannot prove those runtime properties.
+
+### Define backups for VM-local state
+
+Agent authentication/history and OpenWebUI's Docker volume live outside the
+host bind-mounted repositories. If that state matters, it needs an explicit
+export or backup policy instead of treating every VM as reconstructible.
 
 ## Residual Verification Limits
 

@@ -7,7 +7,7 @@
 # ── Config loading with optional local override ───────────────────────────────
 # Sources $1 (typically the tracked config.env), then sources
 # "${1}.local" if it exists. The .local file is gitignored and is the
-# correct place for private values such as private dotfiles URLs.
+# correct place for local values such as auth keys and the real dotfiles URL.
 load_config() {
   local primary="$1"
   [[ -f "$primary" ]] || { echo "ERROR: config file not found: $primary" >&2; exit 1; }
@@ -62,6 +62,23 @@ validate_tailscale_authkey() {
   fi
 }
 
+# Dotfiles are cloned non-interactively during first boot. The VMs receive no
+# SSH key or Git credential, so accepting an SSH URL only defers a guaranteed
+# authentication failure until cloud-init.
+# Usage:  validate_dotfiles_repo <url> <label-for-error>
+validate_dotfiles_repo() {
+  local val="$1"
+  local label="${2:-DOTFILES_REPO}"
+  if [[ -z "$val" ]]; then
+    return 0
+  fi
+  if [[ ! "$val" =~ ^https://[^/@]+(/.*)?$ ]]; then
+    echo "ERROR: $label must be an anonymously readable https:// URL without embedded credentials." >&2
+    echo "       Guest VMs intentionally receive no SSH key or Git credential." >&2
+    exit 2
+  fi
+}
+
 # Escape a string for use as the REPLACEMENT in `sed s|...|REPL|`.
 # Handles the | delimiter, &, and backslash. Newlines are not handled
 # (validate_simple_string already rejects them upstream).
@@ -106,12 +123,15 @@ render_template_checked() {
 
 # Some scripts read DOTFILES_REPO from config.env. If the user hasn't edited
 # it yet, normalize the placeholder to empty so optional-dotfiles workloads
-# (Ollama) don't try to clone the literal placeholder URL.
-# Usage:  effective_dotfiles_repo <raw-value>  → echoes "" or the real URL
+# (Ollama) don't try to clone it. Convert GitHub's common SSH spelling to the
+# anonymous HTTPS equivalent for compatibility with older local config files.
+# Usage:  effective_dotfiles_repo <raw-value>  → echoes "" or an HTTPS URL
 effective_dotfiles_repo() {
   local raw="${1:-}"
   if [[ -z "$raw" || "$raw" == *"YOUR_USERNAME"* ]]; then
     echo ""
+  elif [[ "$raw" =~ ^git@github\.com:(.+)$ ]]; then
+    echo "https://github.com/${BASH_REMATCH[1]}"
   else
     echo "$raw"
   fi
@@ -136,7 +156,27 @@ resolve_git_path() {
   fi
   [[ -d "$path" ]] \
     || { echo "ERROR: project directory not found: $path" >&2; exit 2; }
-  echo "$path"
+  realpath -e -- "$path"
+}
+
+# Verify that an existing instance's per-instance `project` device points to
+# the requested host path. This prevents a re-entry command from silently
+# accepting a different --git value than the one fixed at creation time.
+# Usage:  verify_project_mount <instance> <expected-host-path>
+verify_project_mount() {
+  local instance="$1"
+  local expected="$2"
+  local configured canonical
+
+  configured=$(incus config device get "$instance" project source 2>/dev/null || true)
+  [[ -n "$configured" ]] \
+    || { echo "ERROR: existing instance '$instance' has no local 'project' device; --git cannot be applied on re-entry." >&2; exit 2; }
+
+  canonical=$(realpath -e -- "$configured" 2>/dev/null || true)
+  [[ -n "$canonical" ]] \
+    || { echo "ERROR: existing instance '$instance' uses an unavailable project path: $configured" >&2; exit 2; }
+  [[ "$canonical" == "$expected" ]] \
+    || { echo "ERROR: existing instance '$instance' is mounted from '$canonical', not requested path '$expected'." >&2; exit 2; }
 }
 
 # Wait for an Incus instance to become reachable via `incus exec`.
@@ -144,10 +184,9 @@ resolve_git_path() {
 wait_for_instance() {
   local instance="$1"
   local timeout="${2:-300}"
-  local elapsed=0
+  local started=$SECONDS
   while ! incus exec "$instance" -- true 2>/dev/null; do
-    elapsed=$((elapsed + 5))
-    if (( elapsed >= timeout )); then
+    if (( SECONDS - started >= timeout )); then
       echo "ERROR: instance '$instance' did not become reachable within ${timeout}s." >&2
       return 1
     fi
@@ -157,14 +196,43 @@ wait_for_instance() {
 
 # Wait for cloud-init to finish in a reachable instance.
 # Dumps recent cloud-init log on failure.
-# Usage:  wait_for_cloud_init <name>
+# Usage:  wait_for_cloud_init <name> [timeout_seconds]
 wait_for_cloud_init() {
   local instance="$1"
-  if ! incus exec "$instance" -- cloud-init status --wait; then
+  local timeout_seconds="${2:-3600}"
+  if ! timeout --foreground "$timeout_seconds" \
+      incus exec "$instance" -- cloud-init status --wait; then
     echo "" >&2
-    echo "ERROR: cloud-init failed in '$instance'. Recent log:" >&2
+    echo "ERROR: cloud-init failed or exceeded ${timeout_seconds}s in '$instance'. Recent log:" >&2
     incus exec "$instance" -- tail -n 60 /var/log/cloud-init-output.log >&2 \
       || true
+    return 1
+  fi
+}
+
+# Remove launch-time cloud-init from the Incus instance configuration after a
+# successful first boot. This matters most for Jupyter auth keys and also keeps
+# one-shot bootstrap data from being exposed indefinitely by `incus config`.
+clear_instance_user_data() {
+  local instance="$1"
+  if ! incus config unset "$instance" user.user-data; then
+    echo "WARNING: could not clear launch-time user-data from '$instance'." >&2
+  fi
+}
+
+# Verify the contract shared by LaTeX and agent workspace VMs. This catches
+# old images and previously masked first-boot failures on every re-entry.
+verify_workspace_bootstrap() {
+  local instance="$1"
+  if ! incus exec "$instance" -- test -d /home/admin/.dotfiles; then
+    echo "ERROR: '$instance' has no /home/admin/.dotfiles; its first-boot bootstrap is incomplete." >&2
+    echo "       Fix DOTFILES_REPO, then recreate this VM." >&2
+    return 1
+  fi
+  if ! incus exec "$instance" -- sh -c \
+      'command -v claude >/dev/null && command -v codex >/dev/null && command -v pi >/dev/null'; then
+    echo "ERROR: '$instance' is missing one or more agent CLIs (claude, codex, pi)." >&2
+    echo "       Rebuild the agents/LaTeX images as needed, then recreate this VM." >&2
     return 1
   fi
 }
@@ -176,6 +244,9 @@ wait_and_enter() {
   echo "==> Waiting for VM to be reachable + cloud-init to finish..."
   wait_for_instance "$instance"   || { echo "ERROR: VM did not become reachable." >&2; exit 1; }
   wait_for_cloud_init "$instance" || { echo "ERROR: cloud-init failed; see log above." >&2; exit 1; }
+  verify_workspace_bootstrap "$instance" \
+    || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
+  clear_instance_user_data "$instance"
   echo "==> Entering '$instance'..."
   exec incus exec "$instance" -- su - admin
 }
@@ -188,12 +259,31 @@ reenter_if_exists() {
   incus info "$instance" &>/dev/null || return 1
 
   local state
-  state=$(incus list "$instance" -c s -f csv)
-  if [[ "$state" != "RUNNING" ]]; then
-    echo "==> Starting existing instance '$instance'..."
-    incus start "$instance"
-    wait_for_instance "$instance" || { echo "ERROR: could not reach '$instance' after start." >&2; exit 1; }
-  fi
+  state=$(incus list -c ns -f csv \
+    | awk -F, -v instance="$instance" '$1 == instance { print $2; exit }')
+  case "$state" in
+    RUNNING)
+      ;;
+    FROZEN)
+      echo "==> Unfreezing existing instance '$instance'..."
+      incus unfreeze "$instance"
+      ;;
+    STOPPED)
+      echo "==> Starting existing instance '$instance'..."
+      incus start "$instance"
+      ;;
+    *)
+      echo "ERROR: existing instance '$instance' has unexpected state '${state:-unknown}'." >&2
+      exit 1
+      ;;
+  esac
+  wait_for_instance "$instance" \
+    || { echo "ERROR: could not reach '$instance'." >&2; exit 1; }
+  wait_for_cloud_init "$instance" \
+    || { echo "ERROR: cloud-init is not healthy in '$instance'; see log above." >&2; exit 1; }
+  verify_workspace_bootstrap "$instance" \
+    || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
+  clear_instance_user_data "$instance"
   echo "==> Entering '$instance'..."
   exec incus exec "$instance" -- su - admin
 }
@@ -209,16 +299,17 @@ require_value() {
   fi
 }
 
-# Warn (don't fail) if host UID/GID don't match the VM user (UID 1000).
-# Misalignment causes bind-mounted files to appear with surprising ownership.
-# Usage:  warn_if_uid_mismatch
-warn_if_uid_mismatch() {
-  local host_uid host_gid
-  host_uid=$(id -u)
-  host_gid=$(id -g)
-  if [[ "$host_uid" != "1000" || "$host_gid" != "1000" ]]; then
-    echo "WARNING: host UID=${host_uid} GID=${host_gid}, but the guest 'admin' user is intended to be 1000:1000." >&2
-    echo "         Files on bind-mounted directories may appear under a different owner." >&2
+# Warn (don't fail) when the mounted directory itself is not owned by the
+# numeric UID/GID used by the image's admin user. The invoking host account is
+# irrelevant when a directory belongs to another account or shared group.
+# Usage:  warn_if_bind_mount_owner_mismatch <host-path>
+warn_if_bind_mount_owner_mismatch() {
+  local path="$1"
+  local owner
+  owner=$(stat -c '%u:%g' -- "$path")
+  if [[ "$owner" != "1000:1000" ]]; then
+    echo "WARNING: bind-mount root '$path' is owned by ${owner}; the guest 'admin' user is 1000:1000." >&2
+    echo "         Access depends on the ownership, modes, and ACLs throughout this tree." >&2
     echo "         See SETUP.md §6 'UID/GID alignment for bind mounts'." >&2
   fi
 }

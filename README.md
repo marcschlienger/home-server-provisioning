@@ -21,9 +21,9 @@ filesystem without preventing Caddy, Docker, or the host from writing to `/`.
 - **[`config.env`](./config.env)** — tracked defaults (resource sizes,
   image names, GIT_REPOS_ROOT).
 - **[`LICENSE`](./LICENSE)** — MIT License.
-- **`config.env.local`** (you create it; gitignored) — private local values
-  such as a private dotfiles repo URL or Jupyter Tailscale auth key. Sourced
-  after `config.env` by every script, so it overrides.
+- **`config.env.local`** (you create it; gitignored) — local values such as the
+  real dotfiles repo URL or a Jupyter Tailscale auth key. Launch and build
+  scripts source it after `config.env`, so its values override the defaults.
 
 ## Quick verification
 

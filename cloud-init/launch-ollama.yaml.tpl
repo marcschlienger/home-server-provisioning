@@ -6,28 +6,37 @@
 # Reach the VM from the host with `incus exec`, host-local SSH on incusbr0,
 # or later via a reverse proxy if you expose OpenWebUI.
 #
-# Placeholders substituted by new-ollama-vm.sh before launch:
+# Placeholders substituted by ollama-vm.sh before launch:
 #   __DOTFILES_REPO__      optional dotfiles repo (may be empty)
 #   __INSTALL_CMD__        dotfiles apply command (e.g. stow .)
 # =============================================================================
 
 runcmd:
   # Fixed admin VM login user.
-  - if ! id admin >/dev/null 2>&1; then
-      if id ubuntu >/dev/null 2>&1; then
-        if [ -d /home/admin ]; then
-          usermod -l admin ubuntu && usermod -d /home/admin admin;
-        else
-          usermod -l admin -d /home/admin -m ubuntu;
-        fi && if getent group ubuntu >/dev/null 2>&1 && ! getent group admin >/dev/null 2>&1; then groupmod -n admin ubuntu; fi;
+  - if ! getent group admin >/dev/null 2>&1; then
+      if id ubuntu >/dev/null 2>&1 && getent group ubuntu >/dev/null 2>&1; then
+        groupmod -n admin ubuntu;
       else
-        useradd -m -U -s /usr/bin/zsh -G sudo admin;
+        groupadd admin;
       fi;
     fi
-  - if ! getent group admin >/dev/null 2>&1; then groupadd admin; fi
+  - if ! id admin >/dev/null 2>&1; then
+      if id ubuntu >/dev/null 2>&1; then
+        usermod -l admin ubuntu
+        && usermod -d /home/admin admin
+        && mkdir -p /home/admin
+        && if [ -d /home/ubuntu ]; then
+             cp -a /home/ubuntu/. /home/admin/ && rm -rf /home/ubuntu;
+           fi;
+      else
+        mkdir -p /home/admin
+        && useradd -M -d /home/admin -g admin -s /usr/bin/zsh -G sudo admin;
+      fi;
+    fi
   - usermod -g admin admin
   - usermod -aG sudo admin
   - if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu 2>/dev/null || userdel ubuntu 2>/dev/null || true; fi
+  - chown admin:admin /home/admin
   - printf 'admin ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-vm-user
   - chmod 440 /etc/sudoers.d/90-vm-user
   - chsh -s /usr/bin/zsh admin
@@ -42,7 +51,7 @@ runcmd:
   # Optional dotfiles bootstrap.
   # Single-quoted so spaces / & / ? in URLs can't break the command.
   # validate_simple_string upstream rejects single quotes in DOTFILES_REPO.
-  - if [ -n '__DOTFILES_REPO__' ]; then
+  - if [ -n '__DOTFILES_REPO__' ] && [ ! -d /home/admin/.dotfiles ]; then
       git clone '__DOTFILES_REPO__' /home/admin/.dotfiles
       && chown -R admin:admin /home/admin/.dotfiles
       && sudo -u admin env HOME=/home/admin bash -c

@@ -8,8 +8,8 @@
 gemini-code-*.md
 
 # Local overrides for config.env — this is where REAL SECRETS live
-# (private dotfiles repo URL, local resource overrides, etc.). Every script
-# sources config.env first and then config.env.local if it exists.
+# (auth keys, local paths, resource overrides, etc.). Launch and build scripts
+# source config.env first and then config.env.local if it exists.
 config.env.local
 
 # Validator scratch

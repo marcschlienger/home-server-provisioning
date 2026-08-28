@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# new-ollama-vm.sh — launch an Ubuntu VM with Ollama + OpenWebUI.
+# ollama-vm.sh — launch an Ubuntu VM with Ollama + OpenWebUI.
 #
 # Usage:
-#   ./new-ollama-vm.sh [vm-name]
+#   ./ollama-vm.sh [vm-name]
 #
 # Default name: 'ollama'. Must be DNS-safe.
 #
@@ -25,6 +25,11 @@ load_config "$ROOT_DIR/config.env"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+if (( $# == 1 )) && [[ "$1" == "-h" || "$1" == "--help" ]]; then
+  sed -n '2,17p' "$0"
+  exit 0
+fi
+
 (( $# <= 1 )) \
   || die "Expected at most 1 argument (vm-name); got $#."
 
@@ -43,6 +48,7 @@ incus image info "$BASE_IMAGE" >/dev/null 2>&1 \
 EFFECTIVE_DOTFILES_REPO=$(effective_dotfiles_repo "${DOTFILES_REPO:-}")
 validate_simple_string "$EFFECTIVE_DOTFILES_REPO" "DOTFILES_REPO"
 validate_simple_string "${DOTFILES_INSTALL_CMD:-stow .}" "DOTFILES_INSTALL_CMD"
+validate_dotfiles_repo "$EFFECTIVE_DOTFILES_REPO" "DOTFILES_REPO"
 
 # ── Build launch-init user-data ───────────────────────────────────────────────
 USER_DATA=$(render_template_checked "$ROOT_DIR/cloud-init/launch-ollama.yaml.tpl" \
@@ -52,18 +58,22 @@ USER_DATA=$(render_template_checked "$ROOT_DIR/cloud-init/launch-ollama.yaml.tpl
 echo "==> Launching Ollama VM: $NAME"
 incus launch "$BASE_IMAGE" "$NAME" \
   --vm \
+  --storage "$INCUS_STORAGE_POOL" \
   --config "limits.cpu=${OLLAMA_VM_CPU}" \
   --config "limits.memory=${OLLAMA_VM_RAM}" \
   --device "root,size=${OLLAMA_VM_DISK}" \
   --config "user.user-data=${USER_DATA}"
 
 echo ""
-echo "VM '$NAME' is starting. First boot takes ~5-10 min (Ollama + Docker)."
+echo "VM '$NAME' is starting. Waiting for Ollama + Docker (~5-10 min)..."
+wait_for_instance "$NAME" 600 \
+  || die "VM did not become reachable."
+wait_for_cloud_init "$NAME" \
+  || die "Ollama cloud-init failed; see the log above."
+clear_instance_user_data "$NAME"
+echo "VM '$NAME' is ready."
 echo ""
-echo "Watch progress:"
-echo "  incus exec $NAME -- tail -f /var/log/cloud-init-output.log"
-echo ""
-echo "When ready, pull a model:"
+echo "Pull a model:"
 echo "  incus exec $NAME -- ollama pull llama3.1:8b"
 echo "  incus exec $NAME -- ollama run llama3.1:8b 'hello'"
 echo ""

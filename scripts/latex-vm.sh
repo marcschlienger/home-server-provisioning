@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# new-latex-vm.sh — create or re-enter a persistent LaTeX workspace VM.
+# latex-vm.sh — create or re-enter a persistent LaTeX workspace VM.
 #
 # Usage:
-#   ./new-latex-vm.sh [vm-name] [--git <repo-name-or-path>]
+#   ./latex-vm.sh [vm-name] [--git <repo-name-or-path>]
 #
 # Options:
 #   --git <name|path>   On FIRST run, bind-mount a host directory at
 #                       /home/admin/project inside the VM. Bare names resolve
 #                       under GIT_REPOS_ROOT (e.g. 'teaching' -> $GIT_REPOS_ROOT/teaching);
-#                       absolute host paths are used as-is. Ignored on re-entry.
+#                       absolute host paths are used as-is. On re-entry, the
+#                       requested path must match the mount fixed at creation.
 #
 # Behaviour:
 #   - First run: creates the VM, mounts the project, waits for cloud-init,
@@ -17,10 +18,10 @@
 #   - Re-entry: re-enters the same VM (start if stopped, exec if running).
 #
 # Examples:
-#   ./new-latex-vm.sh                                # default 'latex-ws'
-#   ./new-latex-vm.sh latex-ws --git teaching        # mount $GIT_REPOS_ROOT/teaching
-#   ./new-latex-vm.sh paper --git /mnt/ssd/draft     # absolute host path
-#   ./new-latex-vm.sh latex-ws                       # re-enter later
+#   ./latex-vm.sh                                # default 'latex-ws'
+#   ./latex-vm.sh latex-ws --git teaching        # mount $GIT_REPOS_ROOT/teaching
+#   ./latex-vm.sh paper --git /mnt/ssd/draft     # absolute host path
+#   ./latex-vm.sh latex-ws                       # re-enter later
 # =============================================================================
 set -euo pipefail
 
@@ -34,14 +35,14 @@ NAME=""
 GIT_ARG=""
 
 die()   { echo "ERROR: $*" >&2; exit 1; }
-usage() { sed -n '2,25p' "$0"; exit 1; }
+usage() { sed -n '2,25p' "$0"; }
 
 # ── Parse arguments ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --git) require_value --git "${2:-}" || exit 2
            GIT_ARG="$2"; shift 2 ;;
-    -h|--help) usage ;;
+    -h|--help) usage; exit 0 ;;
     -*) echo "Unknown flag: $1" >&2; exit 2 ;;
     *)  [[ -n "$NAME" ]] \
           && { echo "ERROR: unexpected extra argument '$1' (vm-name is '$NAME')." >&2; exit 2; }
@@ -54,33 +55,40 @@ validate_name "$NAME" "vm-name"
 
 command -v incus >/dev/null 2>&1 || die "incus CLI not found."
 
+HOST_PROJECT=""
+if [[ -n "$GIT_ARG" ]]; then
+  HOST_PROJECT=$(resolve_git_path "$GIT_ARG" "$GIT_REPOS_ROOT")
+fi
+
 # ── Re-entry: if VM exists, start if needed then exec into it ─────────────────
+if incus info "$NAME" &>/dev/null && [[ -n "$HOST_PROJECT" ]]; then
+  verify_project_mount "$NAME" "$HOST_PROJECT"
+fi
 if reenter_if_exists "$NAME"; then
   : # process replaced by exec; we don't reach here
 fi
 
 # ── First-run path ────────────────────────────────────────────────────────────
-[[ "$(effective_dotfiles_repo "$DOTFILES_REPO")" != "" ]] \
+EFFECTIVE_DOTFILES_REPO=$(effective_dotfiles_repo "$DOTFILES_REPO")
+[[ -n "$EFFECTIVE_DOTFILES_REPO" ]] \
   || die "Set DOTFILES_REPO in config.env.local before launching the LaTeX VM."
-validate_simple_string "$DOTFILES_REPO"      "DOTFILES_REPO"
+validate_simple_string "$EFFECTIVE_DOTFILES_REPO" "DOTFILES_REPO"
 validate_simple_string "$DOTFILES_INSTALL_CMD" "DOTFILES_INSTALL_CMD"
+validate_dotfiles_repo "$EFFECTIVE_DOTFILES_REPO" "DOTFILES_REPO"
 
 incus image info "$LATEX_IMAGE" >/dev/null 2>&1 \
   || die "$LATEX_IMAGE not found. Run: ./scripts/build-images.sh --only latex"
 
-HOST_PROJECT=""
-if [[ -n "$GIT_ARG" ]]; then
-  HOST_PROJECT=$(resolve_git_path "$GIT_ARG" "$GIT_REPOS_ROOT")
-  warn_if_uid_mismatch
-fi
+[[ -z "$HOST_PROJECT" ]] || warn_if_bind_mount_owner_mismatch "$HOST_PROJECT"
 
 USER_DATA=$(render_template_checked "$ROOT_DIR/cloud-init/launch-init.yaml.tpl" \
-  DOTFILES_REPO="$DOTFILES_REPO" \
+  DOTFILES_REPO="$EFFECTIVE_DOTFILES_REPO" \
   INSTALL_CMD="$DOTFILES_INSTALL_CMD")
 
 echo "==> Launching LaTeX VM: $NAME"
-incus launch "$LATEX_IMAGE" "$NAME" \
+incus init "$LATEX_IMAGE" "$NAME" \
   --vm \
+  --storage "$INCUS_STORAGE_POOL" \
   --config "limits.cpu=${LATEX_VM_CPU}" \
   --config "limits.memory=${LATEX_VM_RAM}" \
   --device "root,size=${LATEX_VM_DISK}" \
@@ -88,9 +96,13 @@ incus launch "$LATEX_IMAGE" "$NAME" \
 
 if [[ -n "$HOST_PROJECT" ]]; then
   echo "==> Mounting ${HOST_PROJECT} -> /home/admin/project"
-  incus config device add "$NAME" project disk \
-    source="$HOST_PROJECT" \
-    path="/home/admin/project"
+  if ! incus config device add "$NAME" project disk \
+      source="$HOST_PROJECT" \
+      path="/home/admin/project"; then
+    echo "==> Removing incomplete VM '$NAME' after device attachment failed." >&2
+    incus delete "$NAME" --force >/dev/null 2>&1 || true
+    die "Could not attach project directory."
+  fi
   echo ""
   echo "Project '${HOST_PROJECT}' is at /home/admin/project inside the VM."
   echo "Push from the host with your own credentials:"
@@ -98,7 +110,13 @@ if [[ -n "$HOST_PROJECT" ]]; then
   echo ""
 fi
 
-echo "Re-enter any time with:  ./scripts/new-latex-vm.sh $NAME"
+if ! incus start "$NAME"; then
+  echo "==> Removing incomplete VM '$NAME' after its first start failed." >&2
+  incus delete "$NAME" --force >/dev/null 2>&1 || true
+  die "Could not start VM."
+fi
+
+echo "Re-enter any time with:  ./scripts/latex-vm.sh $NAME"
 echo "Or SSH from the host:    ssh admin@\$(incus list $NAME -c4 --format csv | cut -d' ' -f1)"
 echo ""
 wait_and_enter "$NAME"

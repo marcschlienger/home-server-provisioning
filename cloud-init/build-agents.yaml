@@ -15,6 +15,10 @@ runcmd:
   # Pi coding agent
   - npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
+  # Fail the image build rather than publishing an image missing advertised
+  # tools (for example after an upstream package or binary-name change).
+  - command -v claude && command -v codex && command -v pi
+
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 
 final_message: "Agents image build complete."

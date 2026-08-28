@@ -435,7 +435,7 @@ You can also bypass `GIT_REPOS_ROOT` for a single VM by passing an absolute
 host path:
 
 ```bash
-./scripts/new-agent-vm.sh refactor-foo --git /mnt/other-ssd/repos/project-foo
+./scripts/agent-vm.sh refactor-foo --git /mnt/other-ssd/repos/project-foo
 ```
 
 ### 2.8 Bring up Nextcloud AIO
@@ -525,9 +525,9 @@ clean path; rsync works fine if you don't want to publish this anywhere.
 
 ### 2.10 Configure `config.env` and `config.env.local`
 
-There are **two** config files; both get sourced by every script (`.local`
-second, so it overrides). The split exists so private local values never get
-tracked.
+There are **two** config files; launch and build scripts source both (`.local`
+second, so it overrides). The validator deliberately reads tracked defaults
+only. The split keeps private local values out of Git.
 
 **`config.env`** — committed to git. Edit it for shared defaults (resource
 sizes, image names, and the GIT_REPOS_ROOT path).
@@ -537,11 +537,11 @@ Create it on the new host if needed:
 
 ```bash
 cat > config.env.local <<'EOF'
-# Your real dotfiles repo (overrides the placeholder in config.env).
-DOTFILES_REPO="git@github.com:YOUR_USER/dotfiles.git"
+# An anonymously readable dotfiles repo (overrides the placeholder).
+DOTFILES_REPO="https://github.com/YOUR_USER/dotfiles.git"
 
-# Optional: put JupyterHub on your tailnet. Store a real reusable auth key
-# only in this ignored file; leave empty when Jupyter should remain local.
+# Optional: put JupyterHub on your tailnet. Prefer a one-time, pre-authorized
+# key and store it only here; leave empty when Jupyter should remain local.
 JUPYTER_TS_AUTHKEY=""
 EOF
 chmod 600 config.env.local
@@ -555,22 +555,29 @@ Notes:
   is treated as "no dotfiles" by the optional-dotfiles workloads
   (Ollama). LaTeX and agent VMs require a real URL and will refuse to
   launch with the placeholder.
+- VMs intentionally receive no SSH key or Git credential. `DOTFILES_REPO` must
+  therefore be anonymously readable; private-repository credential injection
+  is not implemented. For compatibility, the launchers translate
+  `git@github.com:OWNER/REPO` to its anonymous HTTPS form.
 - VM SSH uses the fixed local login `admin` / `admin`. This is only for the
   host-private Incus bridge; do not expose VM SSH beyond that.
 - The fixed VM SSH password is rendered into Incus cloud-init user-data at
   launch time, so treat this repository as local machine configuration.
 - `JUPYTER_TS_AUTHKEY` is only used by the Jupyter container. VMs still do
-  not install or use Tailscale. If set, it must be a reusable auth key that
-  starts with `tskey-auth-`.
+  not install or use Tailscale. If set, it must start with `tskey-auth-`.
+  Prefer a one-time, pre-authorized key; launch-time user-data is removed from
+  the Incus instance configuration after cloud-init succeeds.
 
-### 2.11 Build the base Incus images
+### 2.11 Build the Incus images
 
 ```bash
 ./scripts/build-images.sh
 ```
 
-Expected timing: base ~10 min, latex ~30-40 min (texlive-full),
-agents ~5 min. ~50 min total wall-clock for first run.
+Images build in dependency order: base → agents → LaTeX. The LaTeX image
+derives from the agents image so worksheet VMs contain `claude`, `codex`, and
+`pi` as well as TeX. Expected timing is base ~10 min, agents ~5 min, and LaTeX
+~30-40 min (texlive-full): roughly 50 min total for the first run.
 
 Subsequent rebuilds of one image only:
 ```bash
@@ -631,22 +638,22 @@ key-based login, add your public key manually to
 
 **LaTeX workspace** (teaching worksheets):
 ```bash
-./scripts/new-latex-vm.sh latex-ws --git teaching-worksheets
+./scripts/latex-vm.sh latex-ws --git teaching-worksheets
 # Script waits for cloud-init then drops you into a shell. Re-enter later
 # with the same command (no --git needed; the mount is already attached).
 ```
 
 **JupyterHub** (small group / personal):
 ```bash
-./scripts/new-jupyter-container.sh adminuser jupyter
-# wait ~10 min, then visit http://jupyter/ from a Tailscale-connected device
-# if JUPYTER_TS_AUTHKEY is set. Otherwise visit http://<container-ip>/ locally.
+./scripts/jupyter-container.sh adminuser jupyter
+# When the script reports ready, visit http://jupyter/ from a Tailscale-connected
+# device if JUPYTER_TS_AUTHKEY is set; otherwise use http://<container-ip>/.
 ```
 
 **Ollama + OpenWebUI**:
 ```bash
-./scripts/new-ollama-vm.sh ollama
-# wait ~5-10 min, then visit http://<vm-ip>:3000
+./scripts/ollama-vm.sh ollama
+# When the script reports ready, visit http://<vm-ip>:3000
 incus exec ollama -- ollama pull llama3.1:8b
 ```
 
@@ -675,15 +682,16 @@ ssh admin@<vm-incusbr0-ip>
 ```bash
 # On the host:
 source ./config.env
+[[ ! -f ./config.env.local ]] || source ./config.env.local
 cd "$GIT_REPOS_ROOT/teaching-worksheets"
 git pull                                      # sync from upstream
 
 # Launch (first time only — supplies the --git mount) or re-enter the VM.
-# The script handles both: creates if missing, starts if stopped, attaches
-# if running. It always drops you into a shell at the end.
-./scripts/new-latex-vm.sh latex-ws --git teaching-worksheets
+# The script handles both: creates if missing, starts if stopped, and enters if
+# running. It always waits for healthy cloud-init before opening a shell.
+./scripts/latex-vm.sh latex-ws --git teaching-worksheets
 # Later re-entries (mount is fixed at creation):
-./scripts/new-latex-vm.sh latex-ws
+./scripts/latex-vm.sh latex-ws
 
 # Inside the VM (tmux + nvim + agents):
 # work on /home/admin/project (same files as $GIT_REPOS_ROOT/teaching-worksheets)
@@ -702,11 +710,12 @@ git push                                      # push with YOUR credentials
 ```bash
 # Clone the project on the host (only first time):
 source ./config.env
+[[ ! -f ./config.env.local ]] || source ./config.env.local
 cd "$GIT_REPOS_ROOT"
 git clone git@github.com:user/project-foo.git
 
 # First run: creates the VM 'agent-refactor-foo' with the project mounted.
-./scripts/new-agent-vm.sh refactor-foo --git project-foo
+./scripts/agent-vm.sh refactor-foo --git project-foo
 # (drops you into a shell inside the VM)
 
 # Inside the VM: tmux, agents commit to a branch.
@@ -718,7 +727,7 @@ git clone git@github.com:user/project-foo.git
 #   incus stop agent-refactor-foo
 
 # Re-enter later — same command, no --git needed:
-./scripts/new-agent-vm.sh refactor-foo
+./scripts/agent-vm.sh refactor-foo
 
 # On the host, review and push:
 cd "$GIT_REPOS_ROOT/project-foo"
@@ -872,10 +881,10 @@ incus exec ollama -- apt install -y mesa-vulkan-drivers
 
 ## 6. UID/GID Alignment for Bind Mounts
 
-When you bind-mount a host repo into a VM with `--git`, the same files appear
-under `/home/admin/project` inside the VM. For reads and writes to behave
-naturally on both sides, **the host user that owns the directory and the VM user
-(UID 1000) need to agree**.
+When you bind-mount a host repo into a VM with `--git`, Incus presents it to the
+guest through VirtioFS at `/home/admin/project`. VirtioFS preserves numeric
+ownership and permissions. The image's `admin` user is UID/GID 1000:1000, so it
+must have access through the directory's owner, group, mode bits, or ACLs.
 
 ### The common case (works out of the box)
 
@@ -886,18 +895,20 @@ and vice versa. Nothing to configure.
 
 ### The edge case (your host UID is not 1000)
 
-If your host user has a different UID (multi-user system, you created the
-admin account in a non-standard way, etc.):
+If the mounted directory belongs to another UID/GID (multi-user system, shared
+repository, or non-standard account setup):
 
 - Files written by the agent appear under a different owner on the host
 - You may not be able to read/edit them from the host without `sudo`
-- The launch scripts print a `WARNING` when they detect this mismatch
+- The launch scripts warn when the mount root is not owned by 1000:1000. This
+  is a useful signal, not proof of failure: group permissions or ACLs may grant
+  correct access, and files deeper in the tree may have different owners.
 
 `raw.idmap` is a container-only option and does not solve this for VMs. Choose
 one of these approaches before putting important work in a bind mount:
 
-1. **Preferred for this single-user server:** keep the host account that owns
-   `GIT_REPOS_ROOT` at UID/GID 1000. This matches the image's `admin` user and
+1. **Preferred for this single-user server:** keep each mounted repository
+   owned by UID/GID 1000:1000. This matches the image's `admin` user and
    requires no translation.
 
 2. **For a host account with another UID:** establish a shared numeric group or
@@ -1065,9 +1076,38 @@ incus exec build-base-<timestamp> -- cat /var/log/cloud-init-output.log
   `incus exec <name> -- bash -c 'echo "admin:admin" | chpasswd && printf "PasswordAuthentication yes\nKbdInteractiveAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vm-password.conf && (systemctl reload ssh || systemctl restart ssh)'`
 
 ### Dotfiles didn't apply
-- Verify `DOTFILES_REPO` is reachable (public, or token in URL)
+- Verify `DOTFILES_REPO` is anonymously readable; guest VMs receive no Git
+  credential, and embedding a token in cloud-init or a URL would expose it.
 - `incus exec <name> -- ls /home/admin/.dotfiles`
 - `incus exec <name> -- tail /var/log/cloud-init-output.log`
+
+### LaTeX workspace has no dotfiles or agent CLIs
+
+Existing VMs do not inherit changes from a rebuilt image. Inspect the original
+first boot before replacing one:
+
+```bash
+incus exec latex-ws -- cloud-init status --long
+incus exec latex-ws -- tail -n 100 /var/log/cloud-init-output.log
+incus exec latex-ws -- sh -c 'ls -ld /home/admin/.dotfiles; command -v claude codex pi'
+```
+
+After correcting `DOTFILES_REPO`, rebuild the dependency chain:
+
+```bash
+./scripts/build-images.sh --only agents
+./scripts/build-images.sh --only latex
+```
+
+Then recreate the LaTeX VM. Deleting it destroys VM-local history and
+credentials, so first preserve anything important outside the VirtioFS-mounted
+project. Files under `/home/admin/project` already live on the host.
+
+```bash
+incus stop latex-ws
+incus delete latex-ws
+./scripts/latex-vm.sh latex-ws --git teaching-worksheets
+```
 
 ### Agent VM has no project files
 - Verify the source path exists on host: `ls "$GIT_REPOS_ROOT/<repo>"`, or
@@ -1116,19 +1156,19 @@ home-server-provisioning/
 │   └── nextcloud-aio.compose.yaml     ← AIO mastercontainer config
 ├── cloud-init/
 │   ├── build-base.yaml               ← system tools (NO Tailscale)
-│   ├── build-latex.yaml              ← +texlive-full + pandoc + pdf tools
 │   ├── build-agents.yaml             ← +Claude Code, Codex, Pi (npm)
+│   ├── build-latex.yaml              ← agents + texlive-full + PDF tools
 │   ├── launch-init.yaml.tpl          ← LaTeX & agent VMs: password SSH + dotfiles (no TS)
 │   ├── launch-jupyter.yaml.tpl      ← Jupyter container: optional TS + TLJH
 │   └── launch-ollama.yaml.tpl       ← Ollama VM: password SSH + Ollama + Docker + OpenWebUI
 └── scripts/
     ├── lib.sh                        ← shared helpers (sourced by most scripts)
-    ├── build-images.sh               ← builds base/latex/agents images
+    ├── build-images.sh               ← builds base → agents → LaTeX images
     ├── validate-cloud-init.sh        ← parses generated cloud-init for all workloads
-    ├── new-latex-vm.sh               ← LaTeX workspace + --git + re-entry + auto-exec
-    ├── new-agent-vm.sh               ← agent sandbox + --git + re-entry + auto-exec
-    ├── new-jupyter-container.sh      ← TLJH system container
-    └── new-ollama-vm.sh              ← Ollama + OpenWebUI VM (CPU-first)
+    ├── latex-vm.sh                   ← LaTeX workspace + --git + re-entry + auto-exec
+    ├── agent-vm.sh                   ← agent sandbox + --git + re-entry + auto-exec
+    ├── jupyter-container.sh          ← TLJH system container
+    └── ollama-vm.sh                  ← Ollama + OpenWebUI VM (CPU-first)
 ```
 
 (No `profiles/` directory anymore — the agent-isolation profile that masked

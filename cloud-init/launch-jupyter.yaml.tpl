@@ -6,8 +6,8 @@
 # image, which is a VM image and can't be reused for system containers), so
 # Python tooling and optional Tailscale must be installed here.
 #
-# Placeholders substituted by new-jupyter-container.sh before launch:
-#   __TS_AUTHKEY__    Tailscale reusable auth key (may be empty)
+# Placeholders substituted by jupyter-container.sh before launch:
+#   __TS_AUTHKEY__    Tailscale auth key (prefer one-time; may be empty)
 #   __TS_HOSTNAME__   hostname for Tailscale registration
 #   __ADMIN_USER__    first JupyterHub admin user
 # =============================================================================
@@ -35,7 +35,7 @@ runcmd:
 
   # Install The Littlest JupyterHub (~10 min on first boot).
   - >-
-    curl -L https://tljh.jupyter.org/bootstrap.py
+    curl -fsSL https://tljh.jupyter.org/bootstrap.py
     | sudo python3 - --admin __ADMIN_USER__
 
 final_message: "Jupyter launch-init complete."
