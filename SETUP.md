@@ -614,6 +614,9 @@ npm packages as Pi dependencies. Pi's npm prefix is fixed at `/usr/local` so
 APT cannot replace its launcher. The LaTeX build refreshes Codex and Pi after
 the large TeX package transaction, then one shared runtime check validates
 Node, Claude, Codex, and Pi in both images and every workspace VM.
+First-boot initialization and later re-entry also reconstruct Pi's launcher
+from its installed package metadata if npm's generated link was lost during
+the image lifecycle; this local repair does not download or reinstall Pi.
 Package-manager Claude installations do not self-update; a later image rebuild
 picks up the then-current stable package.
 

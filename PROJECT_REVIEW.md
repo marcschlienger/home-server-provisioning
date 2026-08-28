@@ -62,6 +62,8 @@ review. Fixes implemented in this pass:
   LaTeX build refreshes Codex and Pi after the TeX package transaction; this
   prevents the inherited Codex payload from remaining in its observed
   post-transaction segfaulting state and restores Pi before final validation.
+  First boot and re-entry also recreate Pi's npm-generated launcher from the
+  installed package metadata if the package survived but its bin link did not.
 - Image builds run the complete cloud-init validator before launching Incus, so
   YAML, `runcmd` type, and placeholder errors fail locally without creating a
   broken build instance.

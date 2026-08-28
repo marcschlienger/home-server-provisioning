@@ -11,6 +11,7 @@
 #   1. Ensure the fixed admin VM login user exists
 #   2. Enable password SSH for that user (admin/admin)
 #   3. Clone + apply dotfiles
+#   4. Restore Pi's npm-generated launcher if it is absent on first boot
 #
 # Placeholders substituted by the launch scripts before launch:
 #   __DOTFILES_REPO__    git URL of dotfiles repo (may be empty)
@@ -21,6 +22,48 @@
 # cloud-init module would otherwise try to inspect the now-absent ubuntu user.
 # These VMs provision no authorized SSH keys, so fingerprint logging is unused.
 no_ssh_fingerprints: true
+
+write_files:
+  # Pi's package survives the image lifecycle, but its npm-generated bin link
+  # can be absent in a newly launched VM. Recreate it from the installed
+  # package metadata; this is deterministic and needs no network reinstall.
+  - path: /usr/local/sbin/repair-pi-launcher
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+
+      [ -x /usr/local/bin/pi ] && exit 0
+
+      package_dir=/usr/local/lib/node_modules/@earendil-works/pi-coding-agent
+      package_json=$package_dir/package.json
+      if [ ! -f "$package_json" ]; then
+        echo "ERROR: Pi package is missing: $package_json" >&2
+        exit 1
+      fi
+
+      entry=$(
+        node - "$package_json" <<'NODE'
+      const fs = require("node:fs");
+      const pkg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+      const entry = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.pi;
+      if (typeof entry !== "string" || entry.length === 0) process.exit(1);
+      process.stdout.write(entry);
+      NODE
+      )
+
+      target=$(readlink -f "$package_dir/$entry")
+      case "$target" in
+        "$package_dir"/*) ;;
+        *) echo "ERROR: invalid Pi entry point: $entry" >&2; exit 1 ;;
+      esac
+      if [ ! -x "$target" ]; then
+        echo "ERROR: Pi entry point is missing or not executable: $target" >&2
+        exit 1
+      fi
+
+      mkdir -p /usr/local/bin
+      ln -sfn "$target" /usr/local/bin/pi
 
 runcmd:
   - set -e
@@ -73,6 +116,7 @@ runcmd:
          'cd ~/.dotfiles && __INSTALL_CMD__';
     fi
   - test -d /home/admin/.dotfiles
+  - /usr/local/sbin/repair-pi-launcher
   - /usr/local/sbin/verify-agent-clis
 
 final_message: "Launch-init complete."
