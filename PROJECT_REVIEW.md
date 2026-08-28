@@ -48,7 +48,9 @@ review. Fixes implemented in this pass:
   incomplete VM.
 - The LaTeX image now derives from the agents image, matching the documented
   availability of Claude Code, Codex, and Pi. Image and first-boot checks fail
-  if any advertised agent executable is absent.
+  if any advertised agent package or executable is absent. The final LaTeX
+  build restores Pi after TeX Live's large package transaction and validates
+  the derived artifact again before it can be published.
 - Dotfiles URLs that cannot work without guest credentials are rejected before
   launch; first boot fails clearly if cloning or installation does not finish.
 - First-boot user migration now remains correct when the pre-attached VirtioFS
@@ -61,6 +63,9 @@ review. Fixes implemented in this pass:
 - Docker's `FORWARD DROP` policy is handled by a tracked, idempotent systemd
   integration that reinstalls scoped `incusbr0` rules after boot and Docker
   restarts, including IPv6 when Docker exposes an IPv6 user chain.
+- Every cloud-init `runcmd` script now enables fail-fast behavior. Download
+  pipelines were replaced with checked temporary files so a failed download or
+  validation cannot be hidden by the exit status of a later command.
 
 ## Accepted Tradeoffs
 

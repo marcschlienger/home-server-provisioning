@@ -230,7 +230,12 @@ verify_workspace_bootstrap() {
     return 1
   fi
   if ! incus exec "$instance" -- sh -c \
-      'command -v claude >/dev/null && command -v codex >/dev/null && command -v pi >/dev/null'; then
+      'npm list -g --depth=0 @anthropic-ai/claude-code >/dev/null
+       && npm list -g --depth=0 @openai/codex >/dev/null
+       && npm list -g --depth=0 @earendil-works/pi-coding-agent >/dev/null
+       && command -v claude >/dev/null
+       && command -v codex >/dev/null
+       && command -v pi >/dev/null'; then
     echo "ERROR: '$instance' is missing one or more agent CLIs (claude, codex, pi)." >&2
     echo "       Rebuild the agents/LaTeX images as needed, then recreate this VM." >&2
     return 1

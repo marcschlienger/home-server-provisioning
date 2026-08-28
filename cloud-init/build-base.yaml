@@ -48,8 +48,12 @@ packages:
   - cloud-guest-utils
 
 runcmd:
+  # runcmd strings are written into one /bin/sh script. Make any failed step
+  # fail scripts-user instead of allowing a later successful cleanup to mask it.
+  - set -e
+
   # Ensure keyring dir exists before any third-party repo install.
-  # (Ubuntu 24.04+ ships it, but defensive — avoids `dd of=` failing on stripped bases.)
+  # (Ubuntu 24.04+ ships it, but keep this defensive for stripped bases.)
   - mkdir -p /etc/apt/keyrings
 
   # fd: Ubuntu ships it as fdfind; create the expected symlink
@@ -62,14 +66,15 @@ runcmd:
     -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
 
   # Node.js LTS via NodeSource (needed for the agent npm packages)
-  - curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+  - curl -fsSL https://deb.nodesource.com/setup_lts.x -o /run/nodesource-setup.sh
+  - bash /run/nodesource-setup.sh && rm -f /run/nodesource-setup.sh
   - apt-get install -y nodejs
 
   # gh CLI
   - >
     curl -fsSL
     https://cli.github.com/packages/githubcli-archive-keyring.gpg
-    | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+    -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
   - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
   - >
     echo "deb [arch=$(dpkg --print-architecture)
@@ -85,5 +90,8 @@ runcmd:
 
   # Clean up apt caches to keep the image lean
   - apt-get clean && rm -rf /var/lib/apt/lists/*
+
+  # Keep this last: it verifies the external installs in the final base image.
+  - test -x /usr/local/bin/yq && command -v fd && command -v node && command -v npm && command -v gh
 
 final_message: "Base image build complete."

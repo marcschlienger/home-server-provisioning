@@ -24,18 +24,22 @@ packages:
   - git
 
 runcmd:
+  - set -e
+
   # Install + bring up Tailscale ONLY if an auth key was provided.
   - if [ -n "__TS_AUTHKEY__" ]; then
-      curl -fsSL https://tailscale.com/install.sh | sh
-      && tailscale up
+      curl -fsSL https://tailscale.com/install.sh -o /run/tailscale-install.sh;
+      sh /run/tailscale-install.sh;
+      rm -f /run/tailscale-install.sh;
+      tailscale up
         --authkey="__TS_AUTHKEY__"
         --hostname="__TS_HOSTNAME__"
         --accept-routes;
     fi
 
   # Install The Littlest JupyterHub (~10 min on first boot).
-  - >-
-    curl -fsSL https://tljh.jupyter.org/bootstrap.py
-    | sudo python3 - --admin __ADMIN_USER__
+  - curl -fsSL https://tljh.jupyter.org/bootstrap.py -o /run/tljh-bootstrap.py
+  - sudo python3 /run/tljh-bootstrap.py --admin __ADMIN_USER__
+  - rm -f /run/tljh-bootstrap.py
 
 final_message: "Jupyter launch-init complete."

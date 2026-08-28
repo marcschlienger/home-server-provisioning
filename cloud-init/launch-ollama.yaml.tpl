@@ -12,6 +12,8 @@
 # =============================================================================
 
 runcmd:
+  - set -e
+
   # Fixed admin VM login user.
   - if ! getent group admin >/dev/null 2>&1; then
       if id ubuntu >/dev/null 2>&1 && getent group ubuntu >/dev/null 2>&1; then
@@ -40,8 +42,11 @@ runcmd:
   - printf 'admin ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-vm-user
   - chmod 440 /etc/sudoers.d/90-vm-user
   - chsh -s /usr/bin/zsh admin
-  - sudo -u admin env HOME=/home/admin bash -c
-      'if [ ! -x "$HOME/.local/bin/uv" ]; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi'
+  - curl -LsSf https://astral.sh/uv/install.sh -o /run/uv-install.sh
+  - chown admin:admin /run/uv-install.sh
+  - sudo -u admin env HOME=/home/admin sh /run/uv-install.sh
+  - rm -f /run/uv-install.sh
+  - test -x /home/admin/.local/bin/uv
 
   # Password SSH for host -> VM access on the private Incus bridge.
   - printf 'admin:%s\n' 'admin' | chpasswd
@@ -59,7 +64,8 @@ runcmd:
     fi
 
   # Ollama (official installer).
-  - curl -fsSL https://ollama.com/install.sh | sh
+  - curl -fsSL https://ollama.com/install.sh -o /run/ollama-install.sh
+  - sh /run/ollama-install.sh && rm -f /run/ollama-install.sh
 
   # Make Ollama listen on all interfaces so OpenWebUI can reach it.
   - mkdir -p /etc/systemd/system/ollama.service.d

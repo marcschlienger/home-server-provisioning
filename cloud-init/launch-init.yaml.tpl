@@ -18,6 +18,8 @@
 # =============================================================================
 
 runcmd:
+  - set -e
+
   # ── VM login user ───────────────────────────────────────────────────────────
   - if ! getent group admin >/dev/null 2>&1; then
       if id ubuntu >/dev/null 2>&1 && getent group ubuntu >/dev/null 2>&1; then
@@ -47,8 +49,11 @@ runcmd:
   - printf 'admin ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-vm-user
   - chmod 440 /etc/sudoers.d/90-vm-user
   - chsh -s /usr/bin/zsh admin
-  - sudo -u admin env HOME=/home/admin bash -c
-      'if [ ! -x "$HOME/.local/bin/uv" ]; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi'
+  - curl -LsSf https://astral.sh/uv/install.sh -o /run/uv-install.sh
+  - chown admin:admin /run/uv-install.sh
+  - sudo -u admin env HOME=/home/admin sh /run/uv-install.sh
+  - rm -f /run/uv-install.sh
+  - test -x /home/admin/.local/bin/uv
 
   # ── Password SSH for host -> VM access on the private Incus bridge ──────────
   - printf 'admin:%s\n' 'admin' | chpasswd
@@ -63,6 +68,12 @@ runcmd:
          'cd ~/.dotfiles && __INSTALL_CMD__';
     fi
   - test -d /home/admin/.dotfiles
-  - command -v claude && command -v codex && command -v pi
+  - >-
+    npm list -g --depth=0 @anthropic-ai/claude-code
+    && npm list -g --depth=0 @openai/codex
+    && npm list -g --depth=0 @earendil-works/pi-coding-agent
+    && command -v claude
+    && command -v codex
+    && command -v pi
 
 final_message: "Launch-init complete."
