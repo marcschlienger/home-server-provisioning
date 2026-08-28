@@ -55,8 +55,9 @@ review. Fixes implemented in this pass:
   checking that its launcher exists.
 - Agent images now use Ubuntu's Node 22 packages instead of NodeSource. The
   agents build removes stale NodeSource state first, so an older base containing
-  Node 24 cannot silently defeat the compatibility constraint. Codex uses its
-  supported standalone installer rather than npm optional platform packages.
+  Node 24 cannot silently defeat the compatibility constraint. Claude uses
+  Anthropic's signed stable APT channel, Codex uses its supported standalone
+  installer, and Pi uses its official installer rather than direct npm commands.
 - Image builds run the complete cloud-init validator before launching Incus, so
   YAML, `runcmd` type, and placeholder errors fail locally without creating a
   broken build instance.
@@ -119,10 +120,10 @@ not folded into a lifecycle bug-fix pass.
 
 Several builds intentionally track moving inputs: the Ubuntu image alias,
 latest `yq`, Pi and Codex releases, TLJH and Ollama installers, OpenWebUI
-`main`, and the Nextcloud AIO `latest` image. Node.js is constrained to Ubuntu's
-22.x package and Claude Code is pinned for required runtime compatibility.
-Pinning the remaining versions and checksums would improve reproducibility and
-supply-chain control but requires a deliberate update policy.
+`main`, the Claude Code stable channel, and the Nextcloud AIO `latest` image.
+Node.js is constrained to Ubuntu's 22.x package. Pinning the remaining versions
+and checksums would improve reproducibility and supply-chain control but
+requires a deliberate update policy.
 
 ### Support private dotfiles securely
 

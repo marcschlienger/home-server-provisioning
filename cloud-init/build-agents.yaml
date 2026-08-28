@@ -1,7 +1,8 @@
 #cloud-config
 # =============================================================================
 # Agents image build — runs on top of ubuntu-base.
-# Installs Claude Code and Pi via npm, plus standalone Codex, system-wide.
+# Installs Claude Code from Anthropic's signed apt repository, Codex with its
+# standalone installer, and Pi with its official installer, system-wide.
 # API keys are NOT included here; they come in via dotfiles at launch time.
 # =============================================================================
 
@@ -15,28 +16,35 @@ write_files:
       set -eu
       command -v node npm claude codex pi timeout >/dev/null
       node -e 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)'
-      npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112 >/dev/null
-      npm list -g --depth=0 @earendil-works/pi-coding-agent >/dev/null
-      DISABLE_AUTOUPDATER=1 timeout 30 claude --version
+      timeout 30 claude --version
       timeout 30 codex --version
-      timeout 30 pi --version
+      pi_version=$(timeout 30 pi --version)
+      case "$pi_version" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) echo "Unexpected Pi version: $pi_version" >&2; exit 1 ;;
+      esac
+      printf '%s\n' "$pi_version"
 
 runcmd:
   - set -e
 
-  # Use Ubuntu 26.04's Node 22 packages. Remove any NodeSource state inherited
-  # from an older base image first: apt will not otherwise replace Node 24 with
-  # Ubuntu's lower-versioned package.
+  # Use Ubuntu 26.04's Node 22 packages for Pi. Remove any NodeSource state
+  # inherited from an older base image first: apt will not otherwise replace
+  # Node 24 with Ubuntu's lower-versioned package.
   - rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/sources.list.d/nodesource.sources /etc/apt/keyrings/nodesource.gpg /usr/share/keyrings/nodesource.gpg
+
+  # Claude Code CLI (Anthropic). Use the signed stable apt channel: it is
+  # system-wide, native, and intentionally skips releases with major regressions.
+  - curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o /etc/apt/keyrings/claude-code.asc
+  - >-
+    test "$(gpg --show-keys --with-colons /etc/apt/keyrings/claude-code.asc
+    | awk -F: '$1 == "fpr" { print $10; exit }')"
+    = 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+  - echo 'deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main' > /etc/apt/sources.list.d/claude-code.list
+
   - apt-get update
   - apt-get purge -y nodejs npm
-  - apt-get install -y nodejs npm
-
-  # Claude Code CLI (Anthropic)
-  # 2.1.112 is the last JavaScript release before the Bun-native binary that
-  # currently crashes on Ubuntu 26.04 virtual machines.
-  - npm install -g @anthropic-ai/claude-code@2.1.112
-  - printf '\nDISABLE_AUTOUPDATER=1\n' >> /etc/environment
+  - apt-get install -y nodejs npm claude-code
 
   # Codex CLI (OpenAI). The supported standalone installer avoids npm's
   # platform-specific optional-package failure mode and verifies its payload.
@@ -44,8 +52,11 @@ runcmd:
   - CODEX_INSTALL_DIR=/usr/local/bin CODEX_HOME=/usr/local/share/codex CODEX_NON_INTERACTIVE=1 sh /run/codex-install.sh
   - rm -f /run/codex-install.sh
 
-  # Pi coding agent
-  - npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+  # Pi coding agent. Pi's official installer remains npm-backed internally;
+  # there is currently no native Pi binary distribution.
+  - curl -fsSL https://pi.dev/install.sh -o /run/pi-install.sh
+  - TERM=dumb sh /run/pi-install.sh
+  - rm -f /run/pi-install.sh
 
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 

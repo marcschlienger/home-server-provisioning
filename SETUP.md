@@ -606,13 +606,14 @@ derives from the agents image so worksheet VMs contain `claude`, `codex`, and
 `pi` as well as TeX. Expected timing is base ~10 min, agents ~5 min, and LaTeX
 ~30-40 min (texlive-full): roughly 50 min total for the first run.
 
-The agents layer uses Ubuntu's Node.js 22 packages and the official standalone
-Codex installer, avoiding npm's platform-specific Codex package failure mode.
-Claude Code is pinned to the last JavaScript-based release (`2.1.112`) because
-newer Bun-native builds have an upstream crash on Ubuntu 26.04 virtual
-machines. Automatic Claude updates are disabled so the compatibility pin is
-not silently replaced. One shared runtime check validates Node, Claude, Codex,
-and Pi in the agents image, the derived LaTeX image, and every workspace VM.
+Claude Code is installed as a native system package from Anthropic's signed
+stable APT channel. Codex uses its official standalone installer, avoiding
+npm's platform-specific package failure mode. Pi uses its official installer;
+that installer is still npm-backed and therefore keeps Ubuntu's Node.js 22 and
+npm packages as Pi dependencies. One shared runtime check validates Node,
+Claude, Codex, and Pi in the agents image, the derived LaTeX image, and every
+workspace VM. Package-manager Claude installations do not self-update; a later
+image rebuild picks up the then-current stable package.
 
 Subsequent rebuilds of one image only:
 ```bash
