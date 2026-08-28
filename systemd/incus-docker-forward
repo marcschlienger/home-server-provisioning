@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Keep Incus bridge forwarding ahead of Docker's user firewall rules.
+set -euo pipefail
+
+readonly BRIDGE="${INCUS_BRIDGE:-incusbr0}"
+
+if [[ ! "$BRIDGE" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+  echo "ERROR: invalid Incus bridge name: $BRIDGE" >&2
+  exit 2
+fi
+
+apply_rules() {
+  local firewall="$1"
+  local required="$2"
+  local retries=30
+  local chain_ready=false
+  local ingress_rule=(-i "$BRIDGE" -j ACCEPT)
+  local return_rule=(-o "$BRIDGE" -m conntrack --ctstate "RELATED,ESTABLISHED" -j ACCEPT)
+
+  if ! command -v "$firewall" >/dev/null 2>&1; then
+    if [[ "$required" == true ]]; then
+      echo "ERROR: $firewall is required but is not installed." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  # Docker creates DOCKER-USER as part of daemon startup. Give it a short
+  # grace period so the helper also behaves predictably during Docker restarts.
+  while (( retries > 0 )); do
+    if "$firewall" -w 5 -nL DOCKER-USER >/dev/null 2>&1; then
+      chain_ready=true
+      break
+    fi
+    [[ "$required" == true ]] || break
+    retries=$((retries - 1))
+    sleep 1
+  done
+
+  if [[ "$chain_ready" != true ]]; then
+    if [[ "$required" == true ]]; then
+      echo "ERROR: Docker did not create the $firewall DOCKER-USER chain." >&2
+      return 1
+    fi
+    echo "INFO: no IPv6 DOCKER-USER chain; skipping IPv6 forwarding rules."
+    return 0
+  fi
+
+  # Remove identical copies first, then put exactly one copy of each rule at
+  # the head of DOCKER-USER. This remains idempotent and prevents an earlier
+  # user DROP rule from shadowing the Incus bridge exception.
+  while "$firewall" -w 5 -C DOCKER-USER "${ingress_rule[@]}" 2>/dev/null; do
+    "$firewall" -w 5 -D DOCKER-USER "${ingress_rule[@]}"
+  done
+  while "$firewall" -w 5 -C DOCKER-USER "${return_rule[@]}" 2>/dev/null; do
+    "$firewall" -w 5 -D DOCKER-USER "${return_rule[@]}"
+  done
+
+  "$firewall" -w 5 -I DOCKER-USER 1 "${return_rule[@]}"
+  "$firewall" -w 5 -I DOCKER-USER 1 "${ingress_rule[@]}"
+}
+
+apply_rules iptables true
+apply_rules ip6tables false

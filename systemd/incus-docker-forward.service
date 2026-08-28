@@ -1,0 +1,16 @@
+[Unit]
+Description=Allow Incus bridge forwarding through Docker's firewall
+Documentation=https://linuxcontainers.org/incus/docs/main/howto/network_bridge_firewalld/
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+Environment=INCUS_BRIDGE=incusbr0
+ExecStart=/usr/local/sbin/incus-docker-forward
+RemainAfterExit=yes
+TimeoutStartSec=45
+
+[Install]
+WantedBy=docker.service

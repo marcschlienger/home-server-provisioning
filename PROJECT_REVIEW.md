@@ -15,7 +15,7 @@ Scope reviewed:
 - hidden local files in the project directory
 
 Checks run:
-- `shellcheck -x scripts/*.sh` passed.
+- `shellcheck -x scripts/*.sh systemd/incus-docker-forward` passed.
 - The Compose file and documented Incus preseed both passed YAML parsing.
   `docker compose config` was not rerun in the review workspace because the
   Docker CLI was unavailable; the Compose file itself was not changed.
@@ -58,6 +58,9 @@ review. Fixes implemented in this pass:
 - Storage selection is explicit for every launched instance; help exits with
   success; bind-mount ownership warnings inspect the directory rather than the
   unrelated invoking account; download commands now fail on HTTP errors.
+- Docker's `FORWARD DROP` policy is handled by a tracked, idempotent systemd
+  integration that reinstalls scoped `incusbr0` rules after boot and Docker
+  restarts, including IPv6 when Docker exposes an IPv6 user chain.
 
 ## Accepted Tradeoffs
 
@@ -131,6 +134,7 @@ prove that:
 - Incus can launch the configured images/containers on the target host.
 - External installer scripts are reachable during first boot.
 - TLJH, Ollama, Docker, and OpenWebUI complete successfully on live instances.
-- Host-local SSH works with the target host firewall/network setup.
+- The tracked Docker/Incus forwarding unit starts successfully and restores
+  live guest internet access on the target host.
 - Jupyter joins the tailnet successfully with a real `JUPYTER_TS_AUTHKEY`.
 - GPU passthrough works on the target hardware.

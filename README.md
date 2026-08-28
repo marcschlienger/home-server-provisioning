@@ -30,12 +30,19 @@ filesystem without preventing Caddy, Docker, or the host from writing to `/`.
 After cloning, sanity-check the cloud-init templates locally:
 
 ```bash
-shellcheck -x scripts/*.sh
+shellcheck -x scripts/*.sh systemd/incus-docker-forward
 docker compose -f compose/nextcloud-aio.compose.yaml config
 ./scripts/validate-cloud-init.sh
 ```
 
 All checks should pass.
+
+On a host that runs both Docker and Incus, install the persistent bridge
+forwarding integration once after installing those services:
+
+```bash
+sudo ./scripts/install-incus-docker-forwarding.sh
+```
 
 ## GitHub Publishing Notes
 

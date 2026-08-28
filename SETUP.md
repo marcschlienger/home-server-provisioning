@@ -366,6 +366,33 @@ sudo usermod -aG docker $USER
 # Log out and back in for group to take effect
 ```
 
+Docker sets the host's forwarding policy to `DROP`. Without an explicit
+exception, Incus guests can receive DHCP leases and resolve DNS through
+`incusbr0` but their forwarded HTTPS connections time out. Install the tracked
+systemd integration after both Docker and Incus are present:
+
+```bash
+sudo ./scripts/install-incus-docker-forwarding.sh
+```
+
+The service keeps the following scoped policy at the head of `DOCKER-USER`:
+
+- traffic originating on `incusbr0` may be forwarded;
+- only established or related forwarded traffic may return to `incusbr0`.
+
+It applies the same policy to IPv6 when Docker creates an IPv6 `DOCKER-USER`
+chain. The unit is tied to `docker.service`, so the idempotent helper runs after
+boot and after Docker restarts. Re-run the installer after pulling a changed
+unit or helper from this repository.
+
+Verify forwarding before building images:
+
+```bash
+sudo systemctl status incus-docker-forward.service
+sudo iptables -S DOCKER-USER
+incus exec <existing-instance> -- curl -4 -I --connect-timeout 10 https://github.com
+```
+
 ### 2.6 Install Caddy (reverse proxy)
 
 ```bash
@@ -1065,7 +1092,11 @@ incus exec build-base-<timestamp> -- cat /var/log/cloud-init-output.log
 
 ### Incus VM has no network
 - Check `incus network show incusbr0`
-- Verify the host's firewall isn't blocking `incusbr0`
+- Verify the persistent Docker/Incus forwarding integration:
+  `sudo systemctl status incus-docker-forward.service`
+- Inspect the effective rules: `sudo iptables -S DOCKER-USER`
+- Reinstall tracked service updates with
+  `sudo ./scripts/install-incus-docker-forwarding.sh`
 - `incus exec <name> -- ip a`
 
 ### Can't SSH into a VM
