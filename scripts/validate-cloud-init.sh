@@ -5,7 +5,9 @@
 # Two kinds of failure caught:
 #   1. YAML parse errors (e.g. the original bug where appended runcmd entries
 #      landed past `final_message`).
-#   2. Unresolved placeholders — any literal __SOMETHING__ remaining in a
+#   2. Invalid runcmd item types. YAML can silently parse an unquoted command
+#      containing `: ` as a mapping, which cloud-init's schema rejects.
+#   3. Unresolved placeholders — any literal __SOMETHING__ remaining in a
 #      generated file means a substitution was forgotten.
 #
 # Three passes:
@@ -80,6 +82,50 @@ check_yaml_quiet() {
   fi
 }
 
+check_runcmd_shape() {
+  local label="$1"
+  local file="$2"
+  local valid=false
+
+  if command -v python3 >/dev/null 2>&1 \
+     && python3 -c 'import yaml' 2>/dev/null; then
+    if python3 -c '
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1])) or {}
+commands = doc.get("runcmd", [])
+ok = isinstance(commands, list) and all(
+    isinstance(item, str)
+    or (isinstance(item, list) and all(isinstance(arg, str) for arg in item))
+    for item in commands
+)
+sys.exit(0 if ok else 1)
+' "$file"; then
+      valid=true
+    fi
+  elif command -v ruby >/dev/null 2>&1; then
+    if ruby -ryaml -e '
+doc = YAML.safe_load(File.read(ARGV[0])) || {}
+commands = doc.fetch("runcmd", [])
+ok = commands.is_a?(Array) && commands.all? do |item|
+  item.is_a?(String) || (item.is_a?(Array) && item.all? { |arg| arg.is_a?(String) })
+end
+exit(ok ? 0 : 1)
+' "$file"; then
+      valid=true
+    fi
+  else
+    die "Need python3+PyYAML or ruby to validate runcmd item types."
+  fi
+
+  if [[ "$valid" == true ]]; then
+    echo "  PASS  $label  (runcmd item types are valid)"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  $label  (runcmd must contain only strings or string arrays)"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 check_no_placeholders() {
   local label="$1"
   local file="$2"
@@ -103,6 +149,7 @@ echo "==> Validating checked-in cloud-init files..."
 for f in "$CI_DIR"/build-*.yaml; do
   [[ -e "$f" ]] || continue
   check_yaml "$(basename "$f")" "$f"
+  check_runcmd_shape "$(basename "$f")" "$f"
   check_no_placeholders "$(basename "$f")" "$f"
 done
 
@@ -110,6 +157,7 @@ done
 for f in "$CI_DIR"/launch-*.yaml.tpl; do
   [[ -e "$f" ]] || continue
   check_yaml "$(basename "$f")  (raw template, placeholders OK)" "$f"
+  check_runcmd_shape "$(basename "$f")  (raw template, placeholders OK)" "$f"
 done
 
 # ── Pass B: generate with SAMPLE values ──────────────────────────────────────
@@ -137,6 +185,7 @@ for scenario in full no-dotfiles; do
     DOTFILES_REPO="$local_df" \
     INSTALL_CMD="$S_INSTALL_CMD" > "$out"
   check_yaml          "launch-init.yaml.tpl  (sample/$scenario)" "$out"
+  check_runcmd_shape  "launch-init.yaml.tpl  (sample/$scenario)" "$out"
   check_no_placeholders "launch-init.yaml.tpl  (sample/$scenario)" "$out"
 done
 
@@ -147,6 +196,7 @@ render_template "$CI_DIR/launch-jupyter.yaml.tpl" \
   TS_HOSTNAME="$S_TS_HOSTNAME" \
   ADMIN_USER="$S_ADMIN_USER" > "$out"
 check_yaml          "launch-jupyter.yaml.tpl  (sample)" "$out"
+check_runcmd_shape  "launch-jupyter.yaml.tpl  (sample)" "$out"
 check_no_placeholders "launch-jupyter.yaml.tpl  (sample)" "$out"
 
 # launch-ollama.yaml.tpl
@@ -155,6 +205,7 @@ render_template "$CI_DIR/launch-ollama.yaml.tpl" \
   DOTFILES_REPO="$S_DOTFILES_REPO" \
   INSTALL_CMD="$S_INSTALL_CMD" > "$out"
 check_yaml          "launch-ollama.yaml.tpl  (sample)" "$out"
+check_runcmd_shape  "launch-ollama.yaml.tpl  (sample)" "$out"
 check_no_placeholders "launch-ollama.yaml.tpl  (sample)" "$out"
 
 # ── Pass C: generate with TRACKED-ONLY config.env values ─────────────────────
@@ -186,6 +237,7 @@ render_template "$CI_DIR/launch-ollama.yaml.tpl" \
   DOTFILES_REPO="$D_DOTFILES_REPO_EFFECTIVE" \
   INSTALL_CMD="$D_INSTALL_CMD" > "$out"
 check_yaml_quiet      "launch-ollama.yaml.tpl  (tracked config)" "$out"
+check_runcmd_shape    "launch-ollama.yaml.tpl  (tracked config)" "$out"
 check_no_placeholders "launch-ollama.yaml.tpl  (tracked config)" "$out"
 # Verify the placeholder URL is actually neutralized.
 if grep -q 'YOUR_USERNAME' "$out"; then
@@ -203,6 +255,7 @@ render_template "$CI_DIR/launch-jupyter.yaml.tpl" \
   TS_HOSTNAME="jupyter" \
   ADMIN_USER="admin" > "$out"
 check_yaml_quiet      "launch-jupyter.yaml.tpl  (tracked config)" "$out"
+check_runcmd_shape    "launch-jupyter.yaml.tpl  (tracked config)" "$out"
 check_no_placeholders "launch-jupyter.yaml.tpl  (tracked config)" "$out"
 
 # ── Summary ──────────────────────────────────────────────────────────────────

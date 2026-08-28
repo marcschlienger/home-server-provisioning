@@ -15,7 +15,7 @@ runcmd:
   - curl -fsSL https://deb.nodesource.com/setup_22.x -o /run/nodesource-setup.sh
   - bash /run/nodesource-setup.sh && rm -f /run/nodesource-setup.sh
   - apt-get install -y nodejs
-  - node -e 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)'
+  - [node, -e, 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)']
 
   # Claude Code CLI (Anthropic)
   # 2.1.112 is the last JavaScript release before the Bun-native binary that

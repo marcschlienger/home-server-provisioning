@@ -20,7 +20,8 @@ Checks run:
   `docker compose config` was not rerun in the review workspace because the
   Docker CLI was unavailable; the Compose file itself was not changed.
 - `bash -n scripts/*.sh` passed.
-- `./scripts/validate-cloud-init.sh` passed: 22 passed, 0 failed.
+- `./scripts/validate-cloud-init.sh` passed: 34 passed, 0 failed, including
+  cloud-init-compatible `runcmd` item-type checks.
 - Launch-script help paths exit successfully without requiring Incus.
 - Static lifecycle assertions confirm `incus init` precedes VirtioFS device
   attachment and `incus start` in both workspace VM scripts.
