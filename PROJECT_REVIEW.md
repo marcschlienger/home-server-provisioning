@@ -58,6 +58,10 @@ review. Fixes implemented in this pass:
   Node 24 cannot silently defeat the compatibility constraint. Claude uses
   Anthropic's signed stable APT channel, Codex uses its supported standalone
   installer, and Pi uses its official installer rather than direct npm commands.
+  Pi is explicitly installed under `/usr/local`, outside APT-owned paths. The
+  LaTeX build refreshes Codex and Pi after the TeX package transaction; this
+  prevents the inherited Codex payload from remaining in its observed
+  post-transaction segfaulting state and restores Pi before final validation.
 - Image builds run the complete cloud-init validator before launching Incus, so
   YAML, `runcmd` type, and placeholder errors fail locally without creating a
   broken build instance.

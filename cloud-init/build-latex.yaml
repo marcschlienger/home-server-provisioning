@@ -27,6 +27,13 @@ runcmd:
 
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 
+  # On Ubuntu 26.04, the large TeX package transaction made the inherited
+  # Codex musl payload segfault. A verified fresh install after that transaction
+  # fixed it. Refresh Pi too so its launcher is guaranteed to live in
+  # /usr/local rather than an APT-owned /usr path.
+  - /usr/local/sbin/install-codex-cli --fresh
+  - /usr/local/sbin/install-pi-cli
+
   # Validate the final derived artifact rather than assuming every executable
   # from the agents image survived the large TeX installation unchanged.
   - /usr/local/sbin/verify-agent-clis

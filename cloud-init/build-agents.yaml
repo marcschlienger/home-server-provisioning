@@ -7,6 +7,46 @@
 # =============================================================================
 
 write_files:
+  # Keep downloads and install destinations in one place. Derived images can
+  # rerun these installers after large package transactions without duplicating
+  # the vendor-specific invocation details.
+  - path: /usr/local/sbin/install-codex-cli
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+
+      case "${1:-}" in
+        "") ;;
+        --fresh)
+          rm -f /usr/local/bin/codex
+          rm -rf /usr/local/share/codex/packages/standalone
+          ;;
+        *)
+          echo "Usage: $0 [--fresh]" >&2
+          exit 2
+          ;;
+      esac
+
+      installer=$(mktemp /run/codex-install.XXXXXX)
+      trap 'rm -f "$installer"' EXIT HUP INT TERM
+      curl -fsSL https://chatgpt.com/codex/install.sh -o "$installer"
+      CODEX_INSTALL_DIR=/usr/local/bin \
+        CODEX_HOME=/usr/local/share/codex \
+        CODEX_NON_INTERACTIVE=1 \
+        sh "$installer"
+
+  - path: /usr/local/sbin/install-pi-cli
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+
+      installer=$(mktemp /run/pi-install.XXXXXX)
+      trap 'rm -f "$installer"' EXIT HUP INT TERM
+      curl -fsSL https://pi.dev/install.sh -o "$installer"
+      NPM_CONFIG_PREFIX=/usr/local TERM=dumb sh "$installer"
+
   # One executable defines the agent-image contract. The agents build, every
   # derived image, first boot, and later re-entry all run this same check.
   - path: /usr/local/sbin/verify-agent-clis
@@ -14,10 +54,24 @@ write_files:
     content: |
       #!/bin/sh
       set -eu
-      command -v node npm claude codex pi timeout >/dev/null
+
+      for command_name in node npm claude codex pi timeout; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+          echo "ERROR: missing required command: $command_name" >&2
+          exit 1
+        fi
+      done
+
+      echo "==> Verifying Node.js 22"
       node -e 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)'
+
+      echo "==> Verifying Claude Code"
       timeout 30 claude --version
+
+      echo "==> Verifying Codex"
       timeout 30 codex --version
+
+      echo "==> Verifying Pi"
       pi_version=$(timeout 30 pi --version)
       case "$pi_version" in
         [0-9]*.[0-9]*.[0-9]*) ;;
@@ -48,15 +102,12 @@ runcmd:
 
   # Codex CLI (OpenAI). The supported standalone installer avoids npm's
   # platform-specific optional-package failure mode and verifies its payload.
-  - curl -fsSL https://chatgpt.com/codex/install.sh -o /run/codex-install.sh
-  - CODEX_INSTALL_DIR=/usr/local/bin CODEX_HOME=/usr/local/share/codex CODEX_NON_INTERACTIVE=1 sh /run/codex-install.sh
-  - rm -f /run/codex-install.sh
+  - /usr/local/sbin/install-codex-cli
 
   # Pi coding agent. Pi's official installer remains npm-backed internally;
-  # there is currently no native Pi binary distribution.
-  - curl -fsSL https://pi.dev/install.sh -o /run/pi-install.sh
-  - TERM=dumb sh /run/pi-install.sh
-  - rm -f /run/pi-install.sh
+  # there is currently no native Pi binary distribution. Force /usr/local so
+  # later APT transactions cannot replace npm's launcher under /usr/bin.
+  - /usr/local/sbin/install-pi-cli
 
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 

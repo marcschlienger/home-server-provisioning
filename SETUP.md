@@ -610,10 +610,12 @@ Claude Code is installed as a native system package from Anthropic's signed
 stable APT channel. Codex uses its official standalone installer, avoiding
 npm's platform-specific package failure mode. Pi uses its official installer;
 that installer is still npm-backed and therefore keeps Ubuntu's Node.js 22 and
-npm packages as Pi dependencies. One shared runtime check validates Node,
-Claude, Codex, and Pi in the agents image, the derived LaTeX image, and every
-workspace VM. Package-manager Claude installations do not self-update; a later
-image rebuild picks up the then-current stable package.
+npm packages as Pi dependencies. Pi's npm prefix is fixed at `/usr/local` so
+APT cannot replace its launcher. The LaTeX build refreshes Codex and Pi after
+the large TeX package transaction, then one shared runtime check validates
+Node, Claude, Codex, and Pi in both images and every workspace VM.
+Package-manager Claude installations do not self-update; a later image rebuild
+picks up the then-current stable package.
 
 Subsequent rebuilds of one image only:
 ```bash
