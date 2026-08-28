@@ -606,6 +606,12 @@ derives from the agents image so worksheet VMs contain `claude`, `codex`, and
 `pi` as well as TeX. Expected timing is base ~10 min, agents ~5 min, and LaTeX
 ~30-40 min (texlive-full): roughly 50 min total for the first run.
 
+The agents layer currently uses Node.js 22 because Node 24/npm 11 can omit
+Codex's required platform package. Claude Code is pinned to the last
+JavaScript-based release (`2.1.112`) because newer Bun-native builds have an
+upstream crash on Ubuntu 26.04 virtual machines. Automatic Claude updates are
+disabled in these images so the compatibility pin is not silently replaced.
+
 Subsequent rebuilds of one image only:
 ```bash
 ./scripts/build-images.sh --only base

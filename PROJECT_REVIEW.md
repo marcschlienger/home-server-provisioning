@@ -50,7 +50,8 @@ review. Fixes implemented in this pass:
   availability of Claude Code, Codex, and Pi. Image and first-boot checks fail
   if any advertised agent package or executable is absent. The final LaTeX
   build restores Pi after TeX Live's large package transaction and validates
-  the derived artifact again before it can be published.
+  the derived artifact again before it can be published. Validation executes
+  each CLI rather than merely checking that its launcher exists.
 - Dotfiles URLs that cannot work without guest credentials are rejected before
   launch; first boot fails clearly if cloning or installation does not finish.
 - First-boot user migration now remains correct when the pre-attached VirtioFS
@@ -109,8 +110,9 @@ not folded into a lifecycle bug-fix pass.
 ### Pin and verify external software
 
 Several builds intentionally track moving inputs: the Ubuntu image alias,
-Node.js LTS installer, latest `yq`, npm packages, TLJH and Ollama installers,
-OpenWebUI `main`, and the Nextcloud AIO `latest` image. Pinning versions and
+latest `yq`, Pi and Codex packages, TLJH and Ollama installers, OpenWebUI
+`main`, and the Nextcloud AIO `latest` image. Node.js and Claude Code are now
+pinned for required runtime compatibility. Pinning the remaining versions and
 checksums would improve reproducibility and supply-chain control but requires a
 deliberate update policy.
 

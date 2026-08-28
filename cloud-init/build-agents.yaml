@@ -8,11 +8,23 @@
 runcmd:
   - set -e
 
+  # Node 24/npm 11 currently drops Codex's platform-specific optional package.
+  # Keep the agent toolchain on Node 22/npm 10 until that upstream regression
+  # is resolved. Install it here (rather than base) so --only agents repairs an
+  # existing base image too.
+  - curl -fsSL https://deb.nodesource.com/setup_22.x -o /run/nodesource-setup.sh
+  - bash /run/nodesource-setup.sh && rm -f /run/nodesource-setup.sh
+  - apt-get install -y nodejs
+  - node -e 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)'
+
   # Claude Code CLI (Anthropic)
-  - npm install -g @anthropic-ai/claude-code
+  # 2.1.112 is the last JavaScript release before the Bun-native binary that
+  # currently crashes on Ubuntu 26.04 virtual machines.
+  - npm install -g @anthropic-ai/claude-code@2.1.112
+  - printf '\nDISABLE_AUTOUPDATER=1\nDISABLE_UPDATES=1\n' >> /etc/environment
 
   # Codex CLI (OpenAI)
-  - npm install -g @openai/codex
+  - npm install -g --include=optional @openai/codex@latest
 
   # Pi coding agent
   - npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -23,11 +35,11 @@ runcmd:
   # failed check followed by successful cleanup would otherwise exit zero.
   # Package identity also avoids accepting Debian's unrelated `pi` calculator.
   - >-
-    npm list -g --depth=0 @anthropic-ai/claude-code
+    npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112
     && npm list -g --depth=0 @openai/codex
     && npm list -g --depth=0 @earendil-works/pi-coding-agent
-    && command -v claude
-    && command -v codex
-    && command -v pi
+    && DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 timeout 30 claude --version
+    && timeout 30 codex --version
+    && timeout 30 pi --version
 
 final_message: "Agents image build complete."

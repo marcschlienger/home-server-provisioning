@@ -74,11 +74,11 @@ runcmd:
     fi
   - test -d /home/admin/.dotfiles
   - >-
-    npm list -g --depth=0 @anthropic-ai/claude-code
+    npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112
     && npm list -g --depth=0 @openai/codex
     && npm list -g --depth=0 @earendil-works/pi-coding-agent
-    && command -v claude
-    && command -v codex
-    && command -v pi
+    && DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 timeout 30 claude --version
+    && timeout 30 codex --version
+    && timeout 30 pi --version
 
 final_message: "Launch-init complete."

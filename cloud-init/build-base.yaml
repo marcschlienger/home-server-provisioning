@@ -65,11 +65,6 @@ runcmd:
     "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
     -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
 
-  # Node.js LTS via NodeSource (needed for the agent npm packages)
-  - curl -fsSL https://deb.nodesource.com/setup_lts.x -o /run/nodesource-setup.sh
-  - bash /run/nodesource-setup.sh && rm -f /run/nodesource-setup.sh
-  - apt-get install -y nodejs
-
   # gh CLI
   - >
     curl -fsSL
@@ -92,6 +87,6 @@ runcmd:
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 
   # Keep this last: it verifies the external installs in the final base image.
-  - test -x /usr/local/bin/yq && command -v fd && command -v node && command -v npm && command -v gh
+  - test -x /usr/local/bin/yq && command -v fd && command -v gh
 
 final_message: "Base image build complete."
