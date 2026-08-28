@@ -606,11 +606,13 @@ derives from the agents image so worksheet VMs contain `claude`, `codex`, and
 `pi` as well as TeX. Expected timing is base ~10 min, agents ~5 min, and LaTeX
 ~30-40 min (texlive-full): roughly 50 min total for the first run.
 
-The agents layer currently uses Node.js 22 because Node 24/npm 11 can omit
-Codex's required platform package. Claude Code is pinned to the last
-JavaScript-based release (`2.1.112`) because newer Bun-native builds have an
-upstream crash on Ubuntu 26.04 virtual machines. Automatic Claude updates are
-disabled in these images so the compatibility pin is not silently replaced.
+The agents layer uses Ubuntu's Node.js 22 packages and the official standalone
+Codex installer, avoiding npm's platform-specific Codex package failure mode.
+Claude Code is pinned to the last JavaScript-based release (`2.1.112`) because
+newer Bun-native builds have an upstream crash on Ubuntu 26.04 virtual
+machines. Automatic Claude updates are disabled so the compatibility pin is
+not silently replaced. One shared runtime check validates Node, Claude, Codex,
+and Pi in the agents image, the derived LaTeX image, and every workspace VM.
 
 Subsequent rebuilds of one image only:
 ```bash
@@ -638,7 +640,8 @@ incus image delete <obsolete-unaliased-fingerprint>
 Never remove files directly from `/var/lib/incus` or `/srv/incus/pool`.
 `build-images.sh` checks that the default profile uses `INCUS_STORAGE_POOL` and
 that `storage.images_volume` points to a custom volume on that pool. It aborts
-before launching a build if either isolation setting is missing.
+before launching a build if either isolation setting is missing. It also runs
+the repository's cloud-init validator before creating any build VM.
 
 ### 2.12 VM login
 
@@ -1193,7 +1196,7 @@ home-server-provisioning/
 │   └── nextcloud-aio.compose.yaml     ← AIO mastercontainer config
 ├── cloud-init/
 │   ├── build-base.yaml               ← system tools (NO Tailscale)
-│   ├── build-agents.yaml             ← +Claude Code, Codex, Pi (npm)
+│   ├── build-agents.yaml             ← +Claude Code, Codex, Pi
 │   ├── build-latex.yaml              ← agents + texlive-full + PDF tools
 │   ├── launch-init.yaml.tpl          ← LaTeX & agent VMs: password SSH + dotfiles (no TS)
 │   ├── launch-jupyter.yaml.tpl      ← Jupyter container: optional TS + TLJH

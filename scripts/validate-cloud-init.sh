@@ -2,7 +2,7 @@
 # =============================================================================
 # validate-cloud-init.sh — sanity-check every cloud-init document.
 #
-# Two kinds of failure caught:
+# Three kinds of failure caught:
 #   1. YAML parse errors (e.g. the original bug where appended runcmd entries
 #      landed past `final_message`).
 #   2. Invalid runcmd item types. YAML can silently parse an unquoted command
@@ -164,8 +164,8 @@ done
 echo ""
 echo "==> Validating GENERATED launch-time cloud-init (sample values)..."
 
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+VALIDATION_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$VALIDATION_TMPDIR"' EXIT
 
 S_DOTFILES_REPO="https://github.com/example/dotfiles.git"
 S_INSTALL_CMD="stow ."
@@ -180,7 +180,7 @@ for scenario in full no-dotfiles; do
   case "$scenario" in
     no-dotfiles) local_df="" ;;
   esac
-  out="$TMPDIR/launch-init.${scenario}.yaml"
+  out="$VALIDATION_TMPDIR/launch-init.${scenario}.yaml"
   render_template "$CI_DIR/launch-init.yaml.tpl" \
     DOTFILES_REPO="$local_df" \
     INSTALL_CMD="$S_INSTALL_CMD" > "$out"
@@ -190,7 +190,7 @@ for scenario in full no-dotfiles; do
 done
 
 # launch-jupyter.yaml.tpl
-out="$TMPDIR/launch-jupyter.sample.yaml"
+out="$VALIDATION_TMPDIR/launch-jupyter.sample.yaml"
 render_template "$CI_DIR/launch-jupyter.yaml.tpl" \
   TS_AUTHKEY="$S_TS_AUTHKEY" \
   TS_HOSTNAME="$S_TS_HOSTNAME" \
@@ -200,7 +200,7 @@ check_runcmd_shape  "launch-jupyter.yaml.tpl  (sample)" "$out"
 check_no_placeholders "launch-jupyter.yaml.tpl  (sample)" "$out"
 
 # launch-ollama.yaml.tpl
-out="$TMPDIR/launch-ollama.sample.yaml"
+out="$VALIDATION_TMPDIR/launch-ollama.sample.yaml"
 render_template "$CI_DIR/launch-ollama.yaml.tpl" \
   DOTFILES_REPO="$S_DOTFILES_REPO" \
   INSTALL_CMD="$S_INSTALL_CMD" > "$out"
@@ -222,17 +222,17 @@ D_INSTALL_CMD=""
 D_JUPYTER_TS_AUTHKEY=""
 eval "$(
   set +u
-	  # shellcheck source=config.env
-	  source "$ROOT_DIR/config.env"
-	  printf 'D_DOTFILES_REPO=%q\n'  "${DOTFILES_REPO:-}"
-	  printf 'D_INSTALL_CMD=%q\n'    "${DOTFILES_INSTALL_CMD:-stow .}"
-	  printf 'D_JUPYTER_TS_AUTHKEY=%q\n' "${JUPYTER_TS_AUTHKEY:-}"
+	# shellcheck source=config.env
+	source "$ROOT_DIR/config.env"
+	printf 'D_DOTFILES_REPO=%q\n'  "${DOTFILES_REPO:-}"
+	printf 'D_INSTALL_CMD=%q\n'    "${DOTFILES_INSTALL_CMD:-stow .}"
+	printf 'D_JUPYTER_TS_AUTHKEY=%q\n' "${JUPYTER_TS_AUTHKEY:-}"
 	)"
 D_DOTFILES_REPO_EFFECTIVE=$(effective_dotfiles_repo "$D_DOTFILES_REPO")
 
 # Ollama uses effective_dotfiles_repo (placeholder → empty) and must produce
 # valid cloud-init even when config.env still has the placeholder.
-out="$TMPDIR/launch-ollama.tracked.yaml"
+out="$VALIDATION_TMPDIR/launch-ollama.tracked.yaml"
 render_template "$CI_DIR/launch-ollama.yaml.tpl" \
   DOTFILES_REPO="$D_DOTFILES_REPO_EFFECTIVE" \
   INSTALL_CMD="$D_INSTALL_CMD" > "$out"
@@ -249,7 +249,7 @@ else
 fi
 
 # Jupyter takes no dotfiles; just confirm tracked-equivalent values work.
-out="$TMPDIR/launch-jupyter.tracked.yaml"
+out="$VALIDATION_TMPDIR/launch-jupyter.tracked.yaml"
 render_template "$CI_DIR/launch-jupyter.yaml.tpl" \
   TS_AUTHKEY="$D_JUPYTER_TS_AUTHKEY" \
   TS_HOSTNAME="jupyter" \

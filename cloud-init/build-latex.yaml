@@ -25,20 +25,10 @@ packages:
 runcmd:
   - set -e
 
-  # TeX Live installs a very large dependency set under /usr. Restore Pi's npm
-  # executable link afterwards, then validate the final derived image rather
-  # than assuming every executable from the agents image survived unchanged.
-  - npm install -g --ignore-scripts @earendil-works/pi-coding-agent
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 
-  # Validate the final derived artifact, with no later command able to mask a
-  # failure by becoming the runcmd script's successful exit status.
-  - >-
-    npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112
-    && npm list -g --depth=0 @openai/codex
-    && npm list -g --depth=0 @earendil-works/pi-coding-agent
-    && DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 timeout 30 claude --version
-    && timeout 30 codex --version
-    && timeout 30 pi --version
+  # Validate the final derived artifact rather than assuming every executable
+  # from the agents image survived the large TeX installation unchanged.
+  - /usr/local/sbin/verify-agent-clis
 
 final_message: "LaTeX image build complete."

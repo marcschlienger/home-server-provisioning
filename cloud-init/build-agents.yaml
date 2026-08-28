@@ -1,45 +1,55 @@
 #cloud-config
 # =============================================================================
 # Agents image build — runs on top of ubuntu-base.
-# Installs Claude Code, Codex, and Pi CLIs system-wide via npm.
+# Installs Claude Code and Pi via npm, plus standalone Codex, system-wide.
 # API keys are NOT included here; they come in via dotfiles at launch time.
 # =============================================================================
+
+write_files:
+  # One executable defines the agent-image contract. The agents build, every
+  # derived image, first boot, and later re-entry all run this same check.
+  - path: /usr/local/sbin/verify-agent-clis
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+      command -v node npm claude codex pi timeout >/dev/null
+      node -e 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)'
+      npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112 >/dev/null
+      npm list -g --depth=0 @earendil-works/pi-coding-agent >/dev/null
+      DISABLE_AUTOUPDATER=1 timeout 30 claude --version
+      timeout 30 codex --version
+      timeout 30 pi --version
 
 runcmd:
   - set -e
 
-  # Node 24/npm 11 currently drops Codex's platform-specific optional package.
-  # Keep the agent toolchain on Node 22/npm 10 until that upstream regression
-  # is resolved. Install it here (rather than base) so --only agents repairs an
-  # existing base image too.
-  - curl -fsSL https://deb.nodesource.com/setup_22.x -o /run/nodesource-setup.sh
-  - bash /run/nodesource-setup.sh && rm -f /run/nodesource-setup.sh
-  - apt-get install -y nodejs
-  - [node, -e, 'process.exit(process.versions.node.split(".")[0] === "22" ? 0 : 1)']
+  # Use Ubuntu 26.04's Node 22 packages. Remove any NodeSource state inherited
+  # from an older base image first: apt will not otherwise replace Node 24 with
+  # Ubuntu's lower-versioned package.
+  - rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/sources.list.d/nodesource.sources /etc/apt/keyrings/nodesource.gpg /usr/share/keyrings/nodesource.gpg
+  - apt-get update
+  - apt-get purge -y nodejs npm
+  - apt-get install -y nodejs npm
 
   # Claude Code CLI (Anthropic)
   # 2.1.112 is the last JavaScript release before the Bun-native binary that
   # currently crashes on Ubuntu 26.04 virtual machines.
   - npm install -g @anthropic-ai/claude-code@2.1.112
-  - printf '\nDISABLE_AUTOUPDATER=1\nDISABLE_UPDATES=1\n' >> /etc/environment
+  - printf '\nDISABLE_AUTOUPDATER=1\n' >> /etc/environment
 
-  # Codex CLI (OpenAI)
-  - npm install -g --include=optional @openai/codex@latest
+  # Codex CLI (OpenAI). The supported standalone installer avoids npm's
+  # platform-specific optional-package failure mode and verifies its payload.
+  - curl -fsSL https://chatgpt.com/codex/install.sh -o /run/codex-install.sh
+  - CODEX_INSTALL_DIR=/usr/local/bin CODEX_HOME=/usr/local/share/codex CODEX_NON_INTERACTIVE=1 sh /run/codex-install.sh
+  - rm -f /run/codex-install.sh
 
   # Pi coding agent
   - npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
   - apt-get clean && rm -rf /var/lib/apt/lists/*
 
-  # Keep this chained check last. runcmd is one shell script, so an earlier
-  # failed check followed by successful cleanup would otherwise exit zero.
-  # Package identity also avoids accepting Debian's unrelated `pi` calculator.
-  - >-
-    npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112
-    && npm list -g --depth=0 @openai/codex
-    && npm list -g --depth=0 @earendil-works/pi-coding-agent
-    && DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 timeout 30 claude --version
-    && timeout 30 codex --version
-    && timeout 30 pi --version
+  # Keep the shared contract check last so the published image is known-good.
+  - /usr/local/sbin/verify-agent-clis
 
 final_message: "Agents image build complete."

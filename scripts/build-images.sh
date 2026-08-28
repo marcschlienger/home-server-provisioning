@@ -51,6 +51,13 @@ command -v incus >/dev/null 2>&1 || die "incus CLI not found in PATH."
 [[ -n "${INCUS_STORAGE_POOL:-}" ]] \
   || die "INCUS_STORAGE_POOL not set in config.env."
 
+VALIDATION_OUTPUT=""
+if ! VALIDATION_OUTPUT=$("$SCRIPT_DIR/validate-cloud-init.sh" 2>&1); then
+  printf '%s\n' "$VALIDATION_OUTPUT" >&2
+  die "Cloud-init validation failed; no build instance was launched."
+fi
+info "Cloud-init documents validated."
+
 incus storage show "$INCUS_STORAGE_POOL" >/dev/null 2>&1 \
   || die "Incus storage pool '$INCUS_STORAGE_POOL' does not exist."
 
@@ -97,7 +104,7 @@ build_and_publish() {
 
   info "Waiting for VM to become reachable..."
   wait_for_instance "$instance" 600 || die "VM never became reachable."
-  info "VM is up. Waiting for cloud-init to finish (may take 20-40 min for latex)..."
+  info "VM is up. Waiting for cloud-init to finish..."
   wait_for_cloud_init "$instance"   || die "cloud-init failed; see log above."
 
   info "Cleaning cloud-init state for a clean snapshot..."

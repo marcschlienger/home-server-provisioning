@@ -73,12 +73,6 @@ runcmd:
          'cd ~/.dotfiles && __INSTALL_CMD__';
     fi
   - test -d /home/admin/.dotfiles
-  - >-
-    npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112
-    && npm list -g --depth=0 @openai/codex
-    && npm list -g --depth=0 @earendil-works/pi-coding-agent
-    && DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 timeout 30 claude --version
-    && timeout 30 codex --version
-    && timeout 30 pi --version
+  - /usr/local/sbin/verify-agent-clis
 
 final_message: "Launch-init complete."

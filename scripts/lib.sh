@@ -229,14 +229,8 @@ verify_workspace_bootstrap() {
     echo "       Fix DOTFILES_REPO, then recreate this VM." >&2
     return 1
   fi
-  if ! incus exec "$instance" -- sh -c \
-      'npm list -g --depth=0 @anthropic-ai/claude-code@2.1.112 >/dev/null &&
-       npm list -g --depth=0 @openai/codex >/dev/null &&
-       npm list -g --depth=0 @earendil-works/pi-coding-agent >/dev/null &&
-       DISABLE_AUTOUPDATER=1 DISABLE_UPDATES=1 timeout 30 claude --version >/dev/null &&
-       timeout 30 codex --version >/dev/null &&
-       timeout 30 pi --version >/dev/null'; then
-    echo "ERROR: '$instance' is missing one or more agent CLIs (claude, codex, pi)." >&2
+  if ! incus exec "$instance" -- /usr/local/sbin/verify-agent-clis >/dev/null; then
+    echo "ERROR: '$instance' failed the agent CLI contract (Node 22, Claude, Codex, Pi)." >&2
     echo "       Rebuild the agents/LaTeX images as needed, then recreate this VM." >&2
     return 1
   fi

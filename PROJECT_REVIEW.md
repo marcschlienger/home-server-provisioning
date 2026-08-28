@@ -49,10 +49,17 @@ review. Fixes implemented in this pass:
   incomplete VM.
 - The LaTeX image now derives from the agents image, matching the documented
   availability of Claude Code, Codex, and Pi. Image and first-boot checks fail
-  if any advertised agent package or executable is absent. The final LaTeX
-  build restores Pi after TeX Live's large package transaction and validates
-  the derived artifact again before it can be published. Validation executes
-  each CLI rather than merely checking that its launcher exists.
+  if any advertised agent package or executable is absent. A single image-baked
+  contract check runs after the agents build, after the LaTeX build, on first
+  boot, and on re-entry. Validation executes each CLI rather than merely
+  checking that its launcher exists.
+- Agent images now use Ubuntu's Node 22 packages instead of NodeSource. The
+  agents build removes stale NodeSource state first, so an older base containing
+  Node 24 cannot silently defeat the compatibility constraint. Codex uses its
+  supported standalone installer rather than npm optional platform packages.
+- Image builds run the complete cloud-init validator before launching Incus, so
+  YAML, `runcmd` type, and placeholder errors fail locally without creating a
+  broken build instance.
 - Dotfiles URLs that cannot work without guest credentials are rejected before
   launch; first boot fails clearly if cloning or installation does not finish.
 - First-boot user migration now remains correct when the pre-attached VirtioFS
@@ -111,11 +118,11 @@ not folded into a lifecycle bug-fix pass.
 ### Pin and verify external software
 
 Several builds intentionally track moving inputs: the Ubuntu image alias,
-latest `yq`, Pi and Codex packages, TLJH and Ollama installers, OpenWebUI
-`main`, and the Nextcloud AIO `latest` image. Node.js and Claude Code are now
-pinned for required runtime compatibility. Pinning the remaining versions and
-checksums would improve reproducibility and supply-chain control but requires a
-deliberate update policy.
+latest `yq`, Pi and Codex releases, TLJH and Ollama installers, OpenWebUI
+`main`, and the Nextcloud AIO `latest` image. Node.js is constrained to Ubuntu's
+22.x package and Claude Code is pinned for required runtime compatibility.
+Pinning the remaining versions and checksums would improve reproducibility and
+supply-chain control but requires a deliberate update policy.
 
 ### Support private dotfiles securely
 
