@@ -857,6 +857,36 @@ The flags are optional on later re-entry because Incus persists the devices.
 Repeating them is useful as a safety check: the launcher verifies every
 requested host-to-guest mapping.
 
+#### Updating a teaching workspace
+
+Ordinary content changes do not require a new VM. The four teaching and TeX
+repositories are host directories mounted into the VM, whereas dotfiles are a
+clone stored inside each VM:
+
+| What changed | Action | Recreate the VM? |
+|---|---|---|
+| `teaching-src` or `teaching-private` | Edit or pull the host repository. The change is immediately visible at `/home/admin/repos/...`. | No |
+| `mtex` or `mstuff` | Edit or pull the host repository. The change is immediately visible at `/home/admin/texmf/...`; no `texhash` is needed for these `TEXMFHOME` trees. | No |
+| Existing dotfiles or skills | Pull and re-stow the VM-local clone, then start a new shell if shell configuration changed. | No |
+| VM packages, image contents, cloud-init, or fixed mount layout | Rebuild the relevant image and/or recreate the VM, depending on the change. | Usually |
+
+Update the dotfiles in an existing teaching VM from the host with:
+
+```bash
+incus exec teaching-ws -- su - admin -c \
+  'cd ~/.dotfiles && git pull --ff-only && stow -R */'
+```
+
+Skills are symlinked from `~/.dotfiles`, so edits to an already-stowed skill
+take effect after the pull. Re-stowing also creates links for newly added
+packages or paths. Re-enter the VM to start a fresh login shell when shell
+configuration changed.
+
+Rebuilding a published image alone never updates an existing VM. Recreate a
+teaching VM only for provisioning or mount-layout changes, or to replace a VM
+whose first boot failed; preserve any VM-local credentials or files first. The
+four mounted repositories remain on the host and are not deleted with the VM.
+
 An older teaching VM uses the asymmetric `/home/admin/project` layout. Recreate
 it to adopt the symmetric repository paths; the host repositories remain
 untouched:
