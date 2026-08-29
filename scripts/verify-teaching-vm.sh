@@ -57,7 +57,7 @@ read -r -a texmf_verify_files <<< "$TEACHING_TEXMF_VERIFY_FILES"
 ensure_instance_ready "$NAME" \
   || { echo "ERROR: teaching VM not found: $NAME" >&2; exit 1; }
 
-verify_project_mount "$NAME" "$src_path"
+verify_bind_mount "$NAME" "$src_path" /home/admin/repos/teaching-src
 verify_bind_mount "$NAME" "$private_path" /home/admin/repos/teaching-private
 verify_bind_mount "$NAME" "$mtex_path" /home/admin/texmf/mtex
 verify_bind_mount "$NAME" "$mstuff_path" /home/admin/texmf/mstuff
@@ -74,7 +74,7 @@ if [[ -z "$TEX_SPEC" ]]; then
 fi
 
 case "$TEX_SPEC" in
-  src:*) guest_root=/home/admin/project; relative_path=${TEX_SPEC#src:} ;;
+  src:*) guest_root=/home/admin/repos/teaching-src; relative_path=${TEX_SPEC#src:} ;;
   private:*) guest_root=/home/admin/repos/teaching-private; relative_path=${TEX_SPEC#private:} ;;
   *) echo "ERROR: --tex must start with src: or private:." >&2; exit 2 ;;
 esac

@@ -5,6 +5,7 @@
 # Usage:
 #   ./latex-vm.sh [vm-name] [--git <repo-name-or-path>]
 #                 [--mount <source>=<guest-path>]...
+#                 [--workdir <guest-path>]
 #                 [--texmf-home <kpathsea-tree-list>]
 #                 [--verify-tex <class-or-style-file>]...
 #
@@ -17,6 +18,8 @@
 #   --mount <src>=<dst>  Add another host repository. Bare sources resolve
 #                       under GIT_REPOS_ROOT. The guest path must be below
 #                       /home/admin/repos or /home/admin/texmf. Repeatable.
+#   --workdir <path>     Start the interactive shell in /home/admin/project,
+#                       /home/admin/repos, or a directory below the latter.
 #   --texmf-home <value> Configure TEXMFHOME persistently for login shells and
 #                       use it for verification. Useful for side-by-side trees.
 #   --verify-tex <file>  Before entering the VM, require kpsewhich to find this
@@ -46,11 +49,12 @@ load_config "$ROOT_DIR/config.env"
 NAME=""
 GIT_ARG=""
 MOUNT_SPECS=()
+ENTER_CWD=""
 TEXMF_HOME=""
 VERIFY_TEX_INPUTS=()
 
 die()   { echo "ERROR: $*" >&2; exit 1; }
-usage() { sed -n '2,34p' "$0"; }
+usage() { sed -n '2,37p' "$0"; }
 
 # ── Parse arguments ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -60,6 +64,10 @@ while [[ $# -gt 0 ]]; do
            GIT_ARG="$2"; shift 2 ;;
     --mount) require_value --mount "${2:-}" || exit 2
              MOUNT_SPECS+=("$2"); shift 2 ;;
+    --workdir) require_value --workdir "${2:-}" || exit 2
+               [[ -z "$ENTER_CWD" ]] \
+                 || { echo "ERROR: --workdir may be specified only once." >&2; exit 2; }
+               ENTER_CWD="$2"; shift 2 ;;
     --texmf-home) require_value --texmf-home "${2:-}" || exit 2
                   [[ -z "$TEXMF_HOME" ]] \
                     || { echo "ERROR: --texmf-home may be specified only once." >&2; exit 2; }
@@ -76,6 +84,20 @@ done
 
 NAME="${NAME:-latex-ws}"
 validate_name "$NAME" "vm-name"
+if [[ -n "$ENTER_CWD" ]]; then
+  if [[ "$ENTER_CWD" == *[[:space:]]* \
+        || "$ENTER_CWD" == *//* \
+        || "$ENTER_CWD" == */./* \
+        || "$ENTER_CWD" == */../* \
+        || "$ENTER_CWD" == */. \
+        || "$ENTER_CWD" == */.. ]]; then
+    die "invalid --workdir guest path: $ENTER_CWD"
+  fi
+  case "$ENTER_CWD" in
+    /home/admin/project | /home/admin/repos | /home/admin/repos/*) ;;
+    *) die "--workdir must be /home/admin/project, /home/admin/repos, or a path below /home/admin/repos" ;;
+  esac
+fi
 if [[ -n "$TEXMF_HOME" && ! "$TEXMF_HOME" =~ ^[A-Za-z0-9_./{},:-]+$ ]]; then
   die "--texmf-home contains unsupported characters: $TEXMF_HOME"
 fi
@@ -85,6 +107,7 @@ for tex_input in "${VERIFY_TEX_INPUTS[@]}"; do
 done
 
 command -v incus >/dev/null 2>&1 || die "incus CLI not found."
+WORKSPACE_ENTER_CWD="$ENTER_CWD"
 
 HOST_PROJECT=""
 if [[ -n "$GIT_ARG" ]]; then

@@ -3,7 +3,7 @@
 # teaching-vm.sh — create or re-enter the persistent teaching workspace.
 #
 # The workspace deliberately exposes four independent host repositories:
-#   /home/admin/project                  teaching-src (primary workspace)
+#   /home/admin/repos/teaching-src      teaching-src
 #   /home/admin/repos/teaching-private  teaching-private (separate repository)
 #   /home/admin/texmf/mtex              mtex TDS tree
 #   /home/admin/texmf/mstuff            mstuff TDS tree
@@ -44,10 +44,11 @@ done
 read -r -a texmf_verify_files <<< "$TEACHING_TEXMF_VERIFY_FILES"
 latex_vm_args=(
   "$NAME"
-  --git "$TEACHING_SRC_REPO"
+  --mount "$TEACHING_SRC_REPO=/home/admin/repos/teaching-src"
   --mount "$TEACHING_PRIVATE_REPO=/home/admin/repos/teaching-private"
   --mount "$TEACHING_MTEX_REPO=/home/admin/texmf/mtex"
   --mount "$TEACHING_MSTUFF_REPO=/home/admin/texmf/mstuff"
+  --workdir /home/admin/repos
   --texmf-home "$TEACHING_TEXMF_HOME"
 )
 for tex_input in "${texmf_verify_files[@]}"; do

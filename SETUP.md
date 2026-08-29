@@ -720,7 +720,7 @@ cd /path/to/home-server-provisioning
 Inside the VM the paths are stable:
 
 ```text
-/home/admin/project                  teaching-src
+/home/admin/repos/teaching-src      teaching-src
 /home/admin/repos/teaching-private  teaching-private
 /home/admin/texmf/mtex              mtex
 /home/admin/texmf/mstuff            mstuff
@@ -776,7 +776,7 @@ ssh admin@<vm-incusbr0-ip>
 The configured teaching launcher keeps four host repositories independent:
 
 ```text
-/home/admin/project                  teaching-src
+/home/admin/repos/teaching-src      teaching-src
 /home/admin/repos/teaching-private  teaching-private
 /home/admin/texmf/mtex              mtex
 /home/admin/texmf/mstuff            mstuff
@@ -794,10 +794,11 @@ cd "$GIT_REPOS_ROOT/teaching-src"
 git pull
 
 # First launch and every later re-entry use the same command.
-./scripts/teaching-vm.sh latex-wp
+./scripts/teaching-vm.sh teaching-ws
 
 # Inside the VM:
-#   work in /home/admin/project
+#   the shell starts in /home/admin/repos
+#   enter teaching-src or teaching-private as needed
 #   run claude, codex, or pi
 #   build with latexmk -pdf main.tex
 
@@ -812,9 +813,9 @@ before opening a shell. A separate non-interactive check can also compile a
 representative document from either source repository:
 
 ```bash
-./scripts/verify-teaching-vm.sh latex-wp
-./scripts/verify-teaching-vm.sh latex-wp --tex src:path/to/worksheet.tex
-./scripts/verify-teaching-vm.sh latex-wp --tex private:path/to/solution.tex
+./scripts/verify-teaching-vm.sh teaching-ws
+./scripts/verify-teaching-vm.sh teaching-ws --tex src:path/to/worksheet.tex
+./scripts/verify-teaching-vm.sh teaching-ws --tex private:path/to/solution.tex
 ```
 
 For other combinations, `--mount` is repeatable. A bare source name resolves
@@ -856,29 +857,15 @@ The flags are optional on later re-entry because Incus persists the devices.
 Repeating them is useful as a safety check: the launcher verifies every
 requested host-to-guest mapping.
 
-For the already existing `latex-wp`, stop it and add the missing persistent
-devices directly. This requires neither an image rebuild nor VM recreation:
+An older teaching VM uses the asymmetric `/home/admin/project` layout. Recreate
+it to adopt the symmetric repository paths; the host repositories remain
+untouched:
 
 ```bash
-incus stop latex-wp
-# If the old combined tree is still mounted, identify and remove that device
-# first; a mount at /home/admin/texmf cannot overlap the two paths below.
-incus config device list latex-wp
-# incus config device remove latex-wp texmf
-
-incus config device add latex-wp teaching-private disk \
-  source="$GIT_REPOS_ROOT/teaching-private" \
-  path=/home/admin/repos/teaching-private
-incus config device add latex-wp mtex disk \
-  source="$GIT_REPOS_ROOT/mtex" \
-  path=/home/admin/texmf/mtex
-incus config device add latex-wp mstuff disk \
-  source="$GIT_REPOS_ROOT/mstuff" \
-  path=/home/admin/texmf/mstuff
-incus start latex-wp
-
-./scripts/verify-teaching-vm.sh latex-wp
-./scripts/teaching-vm.sh latex-wp
+incus delete <old-teaching-vm-name> --force
+./scripts/teaching-vm.sh teaching-ws
+# Exit the VM shell, then verify all four mounts and the TeX inputs:
+./scripts/verify-teaching-vm.sh teaching-ws
 ```
 
 If only one TeX repository is needed in another workspace, add only that tree.

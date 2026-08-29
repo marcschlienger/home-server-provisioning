@@ -383,6 +383,26 @@ verify_tex_input() {
   echo "==> TeX input verified: $tex_input -> $resolved"
 }
 
+# Enter an interactive admin shell, optionally preserving a workspace working
+# directory selected by the launcher. The explicit zsh invocation provides the
+# same login and interactive startup files as `su - admin` without changing to
+# the admin home directory.
+# Usage: enter_workspace_shell <instance>
+enter_workspace_shell() {
+  local instance="$1"
+  local workdir="${WORKSPACE_ENTER_CWD:-}"
+
+  echo "==> Entering '$instance'..."
+  if [[ -z "$workdir" ]]; then
+    exec incus exec "$instance" -- su - admin
+  fi
+  incus exec "$instance" -- test -d "$workdir" \
+    || { echo "ERROR: requested VM working directory does not exist: $workdir" >&2; exit 1; }
+  exec incus exec "$instance" --cwd "$workdir" -- sudo -u admin -H env \
+    HOME=/home/admin USER=admin LOGNAME=admin SHELL=/usr/bin/zsh \
+    /usr/bin/zsh -il
+}
+
 # Combined wait then enter as the fixed admin VM user. Used after first-run creation.
 # Usage:  wait_and_enter <instance> [texmf-home] [tex-input-to-verify]...
 wait_and_enter() {
@@ -402,8 +422,7 @@ wait_and_enter() {
       || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
   done
   clear_instance_user_data "$instance"
-  echo "==> Entering '$instance'..."
-  exec incus exec "$instance" -- su - admin
+  enter_workspace_shell "$instance"
 }
 
 # If the instance already exists, start it if needed and exec into it.
@@ -424,8 +443,7 @@ reenter_if_exists() {
       || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
   done
   clear_instance_user_data "$instance"
-  echo "==> Entering '$instance'..."
-  exec incus exec "$instance" -- su - admin
+  enter_workspace_shell "$instance"
 }
 
 # Validate that a --flag has a usable value (not empty, not another flag).
