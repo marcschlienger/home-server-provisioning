@@ -1324,6 +1324,30 @@ incus delete latex-ws
 ./scripts/latex-vm.sh latex-ws --git teaching-worksheets
 ```
 
+### Pi installation fails with `ENOTEMPTY`
+
+An interrupted or inherited global npm installation can leave Pi's package or
+hidden staging directory below
+`/usr/local/lib/node_modules/@earendil-works`. The current
+`install-pi-cli` removes only those Pi-specific paths before installing, so new
+workspaces recover safely from that state.
+
+If this happened during first boot, cloud-init permanently records the boot as
+failed. For a disposable workspace, update this repository, rebuild the agent
+and dependent LaTeX images, and recreate the VM:
+
+```bash
+git pull --ff-only
+./scripts/build-images.sh --only agents
+./scripts/build-images.sh --only latex
+incus delete teaching-ws --force
+./scripts/teaching-vm.sh teaching-ws
+```
+
+The four teaching repositories are host bind mounts, so deleting the failed VM
+does not delete their contents. VM-local credentials and other files are lost;
+preserve them first if the failed VM was not actually disposable.
+
 ### Agent VM has no project files
 - Verify the source path exists on host: `ls "$GIT_REPOS_ROOT/<repo>"`, or
   check the absolute path you passed to `--git`

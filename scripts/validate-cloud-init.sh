@@ -170,8 +170,17 @@ check_agent_install_boundary() {
     valid=false
   fi
 
+  # The instance-local Pi installer must recover from npm's package directory
+  # and hidden staging directory being left behind by an interrupted install.
+  if ! grep -Fq 'rm -rf /usr/local/lib/node_modules/@earendil-works/pi-coding-agent' \
+       "$CI_DIR/build-agents.yaml" \
+     || ! grep -Fq 'rm -rf /usr/local/lib/node_modules/@earendil-works/.pi-coding-agent-*' \
+       "$CI_DIR/build-agents.yaml"; then
+    valid=false
+  fi
+
   if [[ "$valid" == true ]]; then
-    echo "  PASS  agent install boundary  (images: prerequisites; first boot: Codex + Pi)"
+    echo "  PASS  agent install boundary  (images: prerequisites; first boot: clean Codex + Pi installs)"
     PASS=$((PASS + 1))
   else
     echo "  FAIL  agent install boundary  (Codex/Pi must install only during first boot)"

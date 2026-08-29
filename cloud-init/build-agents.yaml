@@ -34,6 +34,15 @@ write_files:
       #!/bin/sh
       set -eu
 
+      # npm upgrades a global package by first renaming its existing directory
+      # to a hidden, randomly suffixed sibling. A stale sibling from an
+      # interrupted install makes that rename fail with ENOTEMPTY. Remove only
+      # Pi's executable, package, and npm staging siblings so this installer is
+      # safe both after a partial first boot and with an older parent image.
+      rm -f /usr/local/bin/pi
+      rm -rf /usr/local/lib/node_modules/@earendil-works/pi-coding-agent
+      rm -rf /usr/local/lib/node_modules/@earendil-works/.pi-coding-agent-*
+
       installer=$(mktemp /run/pi-install.XXXXXX)
       trap 'rm -f "$installer"' EXIT HUP INT TERM
       curl -fsSL https://pi.dev/install.sh -o "$installer"
