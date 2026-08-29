@@ -179,6 +179,50 @@ check_agent_install_boundary() {
   fi
 }
 
+check_workspace_mount_contract() {
+  local valid=true
+  local launcher init_line project_line extra_line start_line bad_spec
+
+  for launcher in "$SCRIPT_DIR/latex-vm.sh" "$SCRIPT_DIR/agent-vm.sh"; do
+    init_line=$(grep -nF -m1 'incus init ' "$launcher" | cut -d: -f1 || true)
+    project_line=$(grep -nF -m1 "incus config device add \"\$NAME\" project disk" "$launcher" | cut -d: -f1 || true)
+    extra_line=$(grep -nF -m1 "incus config device add \"\$NAME\" \"\$device\" disk" "$launcher" | cut -d: -f1 || true)
+    start_line=$(grep -nF -m1 "if ! incus start \"\$NAME\"" "$launcher" | cut -d: -f1 || true)
+    if [[ -z "$init_line" || -z "$project_line" || -z "$extra_line" || -z "$start_line" ]] \
+       || (( init_line >= project_line || project_line >= start_line \
+             || init_line >= extra_line || extra_line >= start_line )); then
+      valid=false
+    fi
+  done
+
+  if ! (
+    parse_mount_spec 'styles=/home/admin/texmf/tex/latex/local'
+    [[ "$PARSED_MOUNT_SOURCE_ARG" == styles ]]
+    [[ "$PARSED_MOUNT_TARGET" == /home/admin/texmf/tex/latex/local ]]
+    parse_mount_spec 'shared=/home/admin/repos/shared'
+  ) >/dev/null 2>&1; then
+    valid=false
+  fi
+
+  for bad_spec in \
+    'missing-separator' \
+    'styles=/home/admin/project/styles' \
+    'styles=/home/admin/repos/../private' \
+    'styles=/home/admin/repos/shared files'; do
+    if (parse_mount_spec "$bad_spec") >/dev/null 2>&1; then
+      valid=false
+    fi
+  done
+
+  if [[ "$valid" == true ]]; then
+    echo "  PASS  workspace mount contract  (validated paths; every device precedes first boot)"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  workspace mount contract  (path validation or first-boot ordering regressed)"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 # ── Pass A: checked-in files (templates intentionally have placeholders, ─────
 # so only YAML-parse those; build files should also have no __ markers) ──────
 echo "==> Validating checked-in cloud-init files..."
@@ -197,6 +241,7 @@ for f in "$CI_DIR"/launch-*.yaml.tpl; do
 done
 
 check_agent_install_boundary
+check_workspace_mount_contract
 
 # ── Pass B: generate with SAMPLE values ──────────────────────────────────────
 echo ""

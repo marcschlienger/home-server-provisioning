@@ -5,6 +5,7 @@
 #
 # Usage:
 #   ./agent-vm.sh <task-name> [--git <repo-name-or-path>]
+#                 [--mount <source>=<guest-path>]...
 #
 # Options:
 #   --git <name|path>   On FIRST run, bind-mount a host directory at
@@ -12,6 +13,9 @@
 #                       under GIT_REPOS_ROOT; absolute host paths are used as-is.
 #                       On re-entry, must match the mount fixed at creation.
 #                       To mount a different repo, `incus delete` first.
+#   --mount <src>=<dst>  Add another host repository. Bare sources resolve
+#                       under GIT_REPOS_ROOT. The guest path must be below
+#                       /home/admin/repos or /home/admin/texmf. Repeatable.
 #
 # Behaviour:
 #   - First run: creates the VM, mounts the project, waits for cloud-init,
@@ -29,8 +33,8 @@
 #
 # Isolation note: the VM gets a local login password for inbound host->VM SSH,
 # but no private keys — so the agent still can't SSH OUT to your other machines.
-# The agent sees only the bind-mounted project dir, and the VM is not on any
-# tailnet. That's the isolation; inbound host SSH does not weaken it.
+# The agent sees only explicitly bind-mounted directories, and the VM is not on
+# any tailnet. That's the isolation; inbound host SSH does not weaken it.
 # =============================================================================
 set -euo pipefail
 
@@ -42,15 +46,19 @@ load_config "$ROOT_DIR/config.env"
 
 TASK=""
 GIT_ARG=""
+MOUNT_SPECS=()
 
 die()   { echo "ERROR: $*" >&2; exit 1; }
-usage() { sed -n '2,25p' "$0"; }
+usage() { sed -n '2,38p' "$0"; }
 
 # ── Parse arguments ───────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --git) require_value --git "${2:-}" || exit 2
+           [[ -z "$GIT_ARG" ]] || { echo "ERROR: --git may be specified only once." >&2; exit 2; }
            GIT_ARG="$2"; shift 2 ;;
+    --mount) require_value --mount "${2:-}" || exit 2
+             MOUNT_SPECS+=("$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "Unknown flag: $1" >&2; exit 2 ;;
     *)  [[ -n "$TASK" ]] \
@@ -74,9 +82,28 @@ if [[ -n "$GIT_ARG" ]]; then
   HOST_PROJECT=$(resolve_git_path "$GIT_ARG" "$GIT_REPOS_ROOT")
 fi
 
+EXTRA_MOUNT_SOURCES=()
+EXTRA_MOUNT_TARGETS=()
+for spec in "${MOUNT_SPECS[@]}"; do
+  parse_mount_spec "$spec"
+  source_path=$(resolve_git_path "$PARSED_MOUNT_SOURCE_ARG" "$GIT_REPOS_ROOT")
+  for existing_target in "${EXTRA_MOUNT_TARGETS[@]}"; do
+    if [[ "$PARSED_MOUNT_TARGET" == "$existing_target" \
+          || "$PARSED_MOUNT_TARGET" == "$existing_target/"* \
+          || "$existing_target" == "$PARSED_MOUNT_TARGET/"* ]]; then
+      die "overlapping --mount guest paths: '$existing_target' and '$PARSED_MOUNT_TARGET'"
+    fi
+  done
+  EXTRA_MOUNT_SOURCES+=("$source_path")
+  EXTRA_MOUNT_TARGETS+=("$PARSED_MOUNT_TARGET")
+done
+
 # ── Re-entry: if VM exists, start if needed then exec into it ─────────────────
-if incus info "$NAME" &>/dev/null && [[ -n "$HOST_PROJECT" ]]; then
-  verify_project_mount "$NAME" "$HOST_PROJECT"
+if incus info "$NAME" &>/dev/null; then
+  [[ -z "$HOST_PROJECT" ]] || verify_project_mount "$NAME" "$HOST_PROJECT"
+  for i in "${!EXTRA_MOUNT_SOURCES[@]}"; do
+    verify_bind_mount "$NAME" "${EXTRA_MOUNT_SOURCES[$i]}" "${EXTRA_MOUNT_TARGETS[$i]}"
+  done
 fi
 if reenter_if_exists "$NAME"; then
   : # reenter_if_exists exec's into the VM — we don't reach here
@@ -94,6 +121,9 @@ incus image info "$AGENTS_IMAGE" >/dev/null 2>&1 \
   || die "$AGENTS_IMAGE not found. Run: ./scripts/build-images.sh --only agents"
 
 [[ -z "$HOST_PROJECT" ]] || warn_if_bind_mount_owner_mismatch "$HOST_PROJECT"
+for source_path in "${EXTRA_MOUNT_SOURCES[@]}"; do
+  warn_if_bind_mount_owner_mismatch "$source_path"
+done
 
 # ── Build launch-init user-data ───────────────────────────────────────────────
 USER_DATA=$(render_template_checked "$ROOT_DIR/cloud-init/launch-init.yaml.tpl" \
@@ -124,6 +154,28 @@ if [[ -n "$HOST_PROJECT" ]]; then
   echo "Agent's changes land in: ${HOST_PROJECT}"
   echo "Inspect & push from the host:"
   echo "  cd ${HOST_PROJECT} && git status && git diff"
+  echo ""
+fi
+
+for i in "${!EXTRA_MOUNT_SOURCES[@]}"; do
+  device="mount-$((i + 1))"
+  source_path="${EXTRA_MOUNT_SOURCES[$i]}"
+  guest_path="${EXTRA_MOUNT_TARGETS[$i]}"
+  echo "==> Mounting ${source_path} -> ${guest_path}"
+  if ! incus config device add "$NAME" "$device" disk \
+      source="$source_path" path="$guest_path"; then
+    echo "==> Removing incomplete VM '$NAME' after device attachment failed." >&2
+    incus delete "$NAME" --force >/dev/null 2>&1 || true
+    die "Could not attach extra repository at '$guest_path'."
+  fi
+done
+
+if (( ${#EXTRA_MOUNT_SOURCES[@]} > 0 )); then
+  echo ""
+  echo "Additional repositories:"
+  for i in "${!EXTRA_MOUNT_SOURCES[@]}"; do
+    echo "  ${EXTRA_MOUNT_SOURCES[$i]} -> ${EXTRA_MOUNT_TARGETS[$i]}"
+  done
   echo ""
 fi
 

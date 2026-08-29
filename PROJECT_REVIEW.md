@@ -1,6 +1,6 @@
 # Project Review
 
-Review date: 2026-08-28
+Review date: 2026-08-29
 
 Scope reviewed:
 - `README.md`
@@ -20,8 +20,9 @@ Checks run:
   `docker compose config` was not rerun in the review workspace because the
   Docker CLI was unavailable; the Compose file itself was not changed.
 - `bash -n scripts/*.sh` passed.
-- `./scripts/validate-cloud-init.sh` passed: 34 passed, 0 failed, including
-  cloud-init-compatible `runcmd` item-type checks.
+- `./scripts/validate-cloud-init.sh` passed: 36 passed, 0 failed, including
+  cloud-init-compatible `runcmd` item-type checks and the workspace mount
+  path/order contract.
 - Launch-script help paths exit successfully without requiring Incus.
 - Static lifecycle assertions confirm `incus init` precedes VirtioFS device
   attachment and `incus start` in both workspace VM scripts.
@@ -44,6 +45,16 @@ review. Fixes implemented in this pass:
 - Workspace VMs are initialized stopped, receive their VirtioFS project device,
   and only then start. Failed attachment or first start removes the incomplete
   VM.
+- LaTeX and agent launchers accept repeatable extra repository mounts. Guest
+  paths are limited to the explicit workspace and TeX trees, every device is
+  attached before first boot, and repeated mount arguments are verified on
+  re-entry. This also exposes custom `.sty` and `.cls` repositories through
+  TeX Live's standard per-user `~/texmf` tree without copying them into images.
+- A small teaching wrapper keeps the common source/private/TEXMF combination
+  in configuration, verifies one known TeX input with `kpsewhich`, and reduces
+  normal use to one command without hiding the generic mount mechanism. A
+  companion check validates those mounts and can compile one representative
+  document without opening an interactive shell.
 - Re-entry validates any repeated `--git` path, handles frozen VMs, waits for
   cloud-init, and reports bootstrap failures instead of silently entering an
   incomplete VM.

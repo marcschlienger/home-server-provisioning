@@ -159,6 +159,68 @@ resolve_git_path() {
   realpath -e -- "$path"
 }
 
+# Parse a repeatable --mount SOURCE=GUEST_PATH specification. SOURCE follows
+# the same rules as --git. Guest paths are deliberately limited to the two
+# workspace trees intended for extra repositories and TeX inputs.
+# Sets PARSED_MOUNT_SOURCE_ARG and PARSED_MOUNT_TARGET.
+# Usage:  parse_mount_spec "<source>=<guest-path>"
+parse_mount_spec() {
+  local spec="$1"
+  [[ "$spec" == *=* ]] \
+    || { echo "ERROR: --mount expects SOURCE=GUEST_PATH: $spec" >&2; exit 2; }
+
+  PARSED_MOUNT_SOURCE_ARG="${spec%%=*}"
+  PARSED_MOUNT_TARGET="${spec#*=}"
+  [[ -n "$PARSED_MOUNT_SOURCE_ARG" && -n "$PARSED_MOUNT_TARGET" ]] \
+    || { echo "ERROR: --mount source and guest path must both be non-empty: $spec" >&2; exit 2; }
+
+  if [[ "$PARSED_MOUNT_TARGET" == *[[:space:]]* \
+        || "$PARSED_MOUNT_TARGET" == *//* \
+        || "$PARSED_MOUNT_TARGET" == */./* \
+        || "$PARSED_MOUNT_TARGET" == */../* \
+        || "$PARSED_MOUNT_TARGET" == */. \
+        || "$PARSED_MOUNT_TARGET" == */.. ]]; then
+    echo "ERROR: invalid --mount guest path: $PARSED_MOUNT_TARGET" >&2
+    exit 2
+  fi
+
+  case "$PARSED_MOUNT_TARGET" in
+    /home/admin/repos/* | /home/admin/texmf | /home/admin/texmf/*) ;;
+    *)
+      echo "ERROR: --mount guest path must be /home/admin/repos/<name>," >&2
+      echo "       /home/admin/texmf, or a path below /home/admin/texmf." >&2
+      exit 2
+      ;;
+  esac
+}
+
+# Verify an extra disk device on an existing instance by guest path, regardless
+# of the device name assigned when the VM was created.
+# Usage:  verify_bind_mount <instance> <expected-host-path> <guest-path>
+verify_bind_mount() {
+  local instance="$1"
+  local expected="$2"
+  local guest_path="$3"
+  local device configured_path configured_source canonical
+
+  while IFS= read -r device; do
+    configured_path=$(incus config device get "$instance" "$device" path 2>/dev/null || true)
+    [[ "$configured_path" == "$guest_path" ]] || continue
+
+    configured_source=$(incus config device get "$instance" "$device" source 2>/dev/null || true)
+    canonical=$(realpath -e -- "$configured_source" 2>/dev/null || true)
+    [[ -n "$canonical" ]] \
+      || { echo "ERROR: existing instance '$instance' uses an unavailable mount source: $configured_source" >&2; exit 2; }
+    [[ "$canonical" == "$expected" ]] \
+      || { echo "ERROR: '$guest_path' in '$instance' is mounted from '$canonical', not '$expected'." >&2; exit 2; }
+    return 0
+  done < <(incus config device list "$instance")
+
+  echo "ERROR: existing instance '$instance' has no mount at '$guest_path'." >&2
+  echo "       Extra mounts are fixed when the VM is created; add it while stopped or recreate the VM." >&2
+  exit 2
+}
+
 # Verify that an existing instance's per-instance `project` device points to
 # the requested host path. This prevents a re-entry command from silently
 # accepting a different --git value than the one fixed at creation time.
@@ -220,44 +282,14 @@ clear_instance_user_data() {
   fi
 }
 
-# Verify the contract shared by LaTeX and agent workspace VMs. This catches
-# old images and previously masked first-boot failures on every re-entry.
-verify_workspace_bootstrap() {
+# Start or unfreeze an existing instance, then wait until both the guest and
+# cloud-init are healthy. Returns 1 only when the instance does not exist.
+# Usage: ensure_instance_ready <instance>
+ensure_instance_ready() {
   local instance="$1"
-  if ! incus exec "$instance" -- test -d /home/admin/.dotfiles; then
-    echo "ERROR: '$instance' has no /home/admin/.dotfiles; its first-boot bootstrap is incomplete." >&2
-    echo "       Fix DOTFILES_REPO, then recreate this VM." >&2
-    return 1
-  fi
-  if ! incus exec "$instance" -- /usr/local/sbin/verify-agent-clis >/dev/null; then
-    echo "ERROR: '$instance' failed the agent CLI contract (Node 22, Claude, Codex, Pi)." >&2
-    echo "       Rebuild images for Node/Claude; rerun the instance installers for Codex/Pi." >&2
-    return 1
-  fi
-}
-
-# Combined wait then enter as the fixed admin VM user. Used after first-run creation.
-# Usage:  wait_and_enter <instance>
-wait_and_enter() {
-  local instance="$1"
-  echo "==> Waiting for VM to be reachable + cloud-init to finish..."
-  wait_for_instance "$instance"   || { echo "ERROR: VM did not become reachable." >&2; exit 1; }
-  wait_for_cloud_init "$instance" || { echo "ERROR: cloud-init failed; see log above." >&2; exit 1; }
-  verify_workspace_bootstrap "$instance" \
-    || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
-  clear_instance_user_data "$instance"
-  echo "==> Entering '$instance'..."
-  exec incus exec "$instance" -- su - admin
-}
-
-# If the instance already exists, start it if needed and exec into it.
-# Returns 0 after exec (process replaced), 1 if instance doesn't exist.
-# Usage:  reenter_if_exists <name>
-reenter_if_exists() {
-  local instance="$1"
-  incus info "$instance" &>/dev/null || return 1
-
   local state
+
+  incus info "$instance" &>/dev/null || return 1
   state=$(incus list -c ns -f csv \
     | awk -F, -v instance="$instance" '$1 == instance { print $2; exit }')
   case "$state" in
@@ -280,8 +312,77 @@ reenter_if_exists() {
     || { echo "ERROR: could not reach '$instance'." >&2; exit 1; }
   wait_for_cloud_init "$instance" \
     || { echo "ERROR: cloud-init is not healthy in '$instance'; see log above." >&2; exit 1; }
+}
+
+# Verify the contract shared by LaTeX and agent workspace VMs. This catches
+# old images and previously masked first-boot failures on every re-entry.
+verify_workspace_bootstrap() {
+  local instance="$1"
+  if ! incus exec "$instance" -- test -d /home/admin/.dotfiles; then
+    echo "ERROR: '$instance' has no /home/admin/.dotfiles; its first-boot bootstrap is incomplete." >&2
+    echo "       Fix DOTFILES_REPO, then recreate this VM." >&2
+    return 1
+  fi
+  if ! incus exec "$instance" -- /usr/local/sbin/verify-agent-clis >/dev/null; then
+    echo "ERROR: '$instance' failed the agent CLI contract (Node 22, Claude, Codex, Pi)." >&2
+    echo "       Rebuild images for Node/Claude; rerun the instance installers for Codex/Pi." >&2
+    return 1
+  fi
+}
+
+# Verify that a TeX input is visible to the fixed workspace user. This is used
+# by the teaching workspace after its personal TEXMF tree has been mounted at
+# /home/admin/texmf (TeX Live's default TEXMFHOME for that user).
+# Usage: verify_tex_input <instance> <class-or-style-file>
+verify_tex_input() {
+  local instance="$1"
+  local tex_input="$2"
+  local resolved
+
+  [[ -n "$tex_input" ]] || return 0
+  if [[ ! "$tex_input" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "ERROR: TeX verification input contains unsupported characters: $tex_input" >&2
+    return 1
+  fi
+
+  resolved=$(incus exec "$instance" -- sudo -u admin env HOME=/home/admin \
+    kpsewhich "$tex_input" 2>/dev/null || true)
+  if [[ -z "$resolved" ]]; then
+    echo "ERROR: '$tex_input' is not visible in the TeX search path of '$instance'." >&2
+    echo "       Check the host style tree and its /home/admin/texmf mount." >&2
+    return 1
+  fi
+  echo "==> TeX input verified: $tex_input -> $resolved"
+}
+
+# Combined wait then enter as the fixed admin VM user. Used after first-run creation.
+# Usage:  wait_and_enter <instance> [tex-input-to-verify]
+wait_and_enter() {
+  local instance="$1"
+  local tex_input="${2:-}"
+  echo "==> Waiting for VM to be reachable + cloud-init to finish..."
+  wait_for_instance "$instance"   || { echo "ERROR: VM did not become reachable." >&2; exit 1; }
+  wait_for_cloud_init "$instance" || { echo "ERROR: cloud-init failed; see log above." >&2; exit 1; }
   verify_workspace_bootstrap "$instance" \
     || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
+  verify_tex_input "$instance" "$tex_input" \
+    || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
+  clear_instance_user_data "$instance"
+  echo "==> Entering '$instance'..."
+  exec incus exec "$instance" -- su - admin
+}
+
+# If the instance already exists, start it if needed and exec into it.
+# Returns 0 after exec (process replaced), 1 if instance doesn't exist.
+# Usage:  reenter_if_exists <name> [tex-input-to-verify]
+reenter_if_exists() {
+  local instance="$1"
+  local tex_input="${2:-}"
+  ensure_instance_ready "$instance" || return 1
+  verify_workspace_bootstrap "$instance" \
+    || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
+  verify_tex_input "$instance" "$tex_input" \
+    || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
   clear_instance_user_data "$instance"
   echo "==> Entering '$instance'..."
   exec incus exec "$instance" -- su - admin

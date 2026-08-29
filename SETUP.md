@@ -691,10 +691,35 @@ key-based login, add your public key manually to
 
 **LaTeX workspace** (teaching worksheets):
 ```bash
-./scripts/latex-vm.sh latex-ws --git teaching-worksheets
+./scripts/latex-vm.sh latex-ws \
+  --git teaching-worksheets \
+  --mount latex-styles=/home/admin/texmf/tex/latex/local
 # Script waits for cloud-init then drops you into a shell. Re-enter later
-# with the same command (no --git needed; the mount is already attached).
+# without the flags; every mount remains attached to the VM.
 ```
+
+**Teaching-agent workspace** (public sources, private assessments, and the
+personal TEXMF tree kept as separate host directories):
+
+```bash
+# Defaults below GIT_REPOS_ROOT:
+#   teaching-src, teaching-private, teaching-texmf
+# Override any of these with an absolute path in config.env.local when needed.
+./scripts/teaching-vm.sh teaching-ws
+```
+
+Inside the VM the paths are stable:
+
+```text
+/home/admin/project                  teaching-src
+/home/admin/repos/teaching-private  teaching-private
+/home/admin/texmf                    personal TEXMF tree
+```
+
+The launcher verifies `msheet.cls` with `kpsewhich` before opening the shell.
+Change `TEACHING_TEXMF_VERIFY_FILE` in `config.env.local` if a different file
+is the appropriate installation probe. The repositories remain independent;
+Nextcloud is not mounted into the teaching workspace.
 
 **JupyterHub** (small group / personal):
 ```bash
@@ -732,31 +757,103 @@ ssh admin@<vm-incusbr0-ip>
 
 ### 3.1 Working on a teaching worksheet (LaTeX VM)
 
+The configured teaching launcher keeps three host repositories independent:
+
+```text
+/home/admin/project                  teaching-src
+/home/admin/repos/teaching-private  teaching-private
+/home/admin/texmf                    teaching-texmf
+```
+
+The tracked defaults are the four `TEACHING_*` values in `config.env`. Override
+different local repository paths or the probe filename in `config.env.local`.
+The TEXMF repository should use the standard layout, for example
+`tex/latex/local/msheet.cls`.
+
 ```bash
-# On the host:
 source ./config.env
 [[ ! -f ./config.env.local ]] || source ./config.env.local
-cd "$GIT_REPOS_ROOT/teaching-worksheets"
-git pull                                      # sync from upstream
+cd "$GIT_REPOS_ROOT/teaching-src"
+git pull
 
-# Launch (first time only — supplies the --git mount) or re-enter the VM.
-# The script handles both: creates if missing, starts if stopped, and enters if
-# running. It always waits for healthy cloud-init before opening a shell.
-./scripts/latex-vm.sh latex-ws --git teaching-worksheets
-# Later re-entries (mount is fixed at creation):
-./scripts/latex-vm.sh latex-ws
+# First launch and every later re-entry use the same command.
+./scripts/teaching-vm.sh latex-wp
 
-# Inside the VM (tmux + nvim + agents):
-# work on /home/admin/project (same files as $GIT_REPOS_ROOT/teaching-worksheets)
-# Run agents:  claude / codex / pi
-# Build PDFs:  latexmk -pdf main.tex
+# Inside the VM:
+#   work in /home/admin/project
+#   run claude, codex, or pi
+#   build with latexmk -pdf main.tex
 
-# Back on the host — review and push:
-cd "$GIT_REPOS_ROOT/teaching-worksheets"
+# Back on the host, review and push with your own credentials.
+cd "$GIT_REPOS_ROOT/teaching-src"
 git status
-git log --oneline -n 10
-git push                                      # push with YOUR credentials
+git push
 ```
+
+The wrapper verifies the configured `.cls` or `.sty` file with `kpsewhich`
+before opening a shell. A separate non-interactive check can also compile a
+representative document from either source repository:
+
+```bash
+./scripts/verify-teaching-vm.sh latex-wp
+./scripts/verify-teaching-vm.sh latex-wp --tex src:path/to/worksheet.tex
+./scripts/verify-teaching-vm.sh latex-wp --tex private:path/to/solution.tex
+```
+
+For other combinations, `--mount` is repeatable. A bare source name resolves
+below `GIT_REPOS_ROOT`, just like `--git`; an absolute source path also works.
+Extra repositories are deliberately limited to `/home/admin/repos/...` and TeX
+inputs to `/home/admin/texmf...`. Every device is attached while the VM is
+stopped, before its first boot.
+
+```bash
+./scripts/latex-vm.sh paper \
+  --git draft \
+  --mount references=/home/admin/repos/references \
+  --mount latex-styles=/home/admin/texmf/tex/latex/local \
+  --verify-tex my-style.sty
+```
+
+TeX Live searches `/home/admin/texmf` as the `admin` user's private TeX tree.
+Choose the mount point to match the style repository's layout:
+
+- If the repository already contains `tex/latex/<package>/*.sty` or `.cls`,
+  mount its root at `/home/admin/texmf`.
+- If `.sty` and `.cls` files sit directly in the repository root, mount it at
+  `/home/admin/texmf/tex/latex/local` as in the example above.
+
+Inside the VM, confirm that TeX can find a file:
+
+```bash
+kpsewhich -var-value=TEXMFHOME
+kpsewhich my-style.sty
+```
+
+The flags are optional on later re-entry because Incus persists the devices.
+Repeating them is useful as a safety check: the launcher verifies every
+requested host-to-guest mapping.
+
+For the already existing `latex-wp`, stop it and add the missing persistent
+devices directly. This requires neither an image rebuild nor VM recreation:
+
+```bash
+incus stop latex-wp
+incus config device add latex-wp teaching-private disk \
+  source="$GIT_REPOS_ROOT/teaching-private" \
+  path=/home/admin/repos/teaching-private
+incus config device add latex-wp texmf disk \
+  source="$GIT_REPOS_ROOT/teaching-texmf" \
+  path=/home/admin/texmf
+incus start latex-wp
+
+./scripts/verify-teaching-vm.sh latex-wp
+./scripts/teaching-vm.sh latex-wp
+```
+
+If only the style tree is needed, add only `texmf`. For a flat style repository,
+use `path=/home/admin/texmf/tex/latex/local` instead. Device names must be
+unique. To replace a mapping, stop the VM, run
+`incus config device remove <vm> <device-name>`, and add it again.
 
 ### 3.2 Running an agent on a project (persistent VM)
 
@@ -934,8 +1031,9 @@ incus exec ollama -- apt install -y mesa-vulkan-drivers
 
 ## 6. UID/GID Alignment for Bind Mounts
 
-When you bind-mount a host repo into a VM with `--git`, Incus presents it to the
-guest through VirtioFS at `/home/admin/project`. VirtioFS preserves numeric
+When you bind-mount a host repo into a VM with `--git` or `--mount`, Incus
+presents it to the guest through VirtioFS. The primary `--git` repository is at
+`/home/admin/project`; extra paths are explicit. VirtioFS preserves numeric
 ownership and permissions. The image's `admin` user is UID/GID 1000:1000, so it
 must have access through the directory's owner, group, mode bits, or ACLs.
 
@@ -1232,8 +1330,10 @@ home-server-provisioning/
     ├── lib.sh                        ← shared helpers (sourced by most scripts)
     ├── build-images.sh               ← builds base → agents → LaTeX images
     ├── validate-cloud-init.sh        ← parses generated cloud-init for all workloads
-    ├── latex-vm.sh                   ← LaTeX workspace + --git + re-entry + auto-exec
-    ├── agent-vm.sh                   ← agent sandbox + --git + re-entry + auto-exec
+    ├── latex-vm.sh                   ← LaTeX workspace + repeatable repo mounts
+    ├── teaching-vm.sh                ← configured three-tree teaching workspace
+    ├── verify-teaching-vm.sh         ← mounts, TEXMF, optional LaTeX build check
+    ├── agent-vm.sh                   ← agent sandbox + repeatable repo mounts
     ├── jupyter-container.sh          ← TLJH system container
     └── ollama-vm.sh                  ← Ollama + OpenWebUI VM (CPU-first)
 ```

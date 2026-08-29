@@ -18,8 +18,10 @@ filesystem without preventing Caddy, Docker, or the host from writing to `/`.
   Nextcloud AIO mastercontainer Compose file.
 - **[`PROJECT_REVIEW.md`](./PROJECT_REVIEW.md)** — current static review,
   accepted tradeoffs, and residual verification limits.
+- **[`scripts/teaching-vm.sh`](./scripts/teaching-vm.sh)** — persistent teaching
+  workspace with separate public/private repositories and personal TEXMF.
 - **[`config.env`](./config.env)** — tracked defaults (resource sizes,
-  image names, GIT_REPOS_ROOT).
+  image names, repository roots, and teaching-workspace inputs).
 - **[`LICENSE`](./LICENSE)** — MIT License.
 - **`config.env.local`** (you create it; gitignored) — local values such as the
   real dotfiles repo URL or a Jupyter Tailscale auth key. Launch and build
@@ -33,6 +35,7 @@ After cloning, sanity-check the cloud-init templates locally:
 shellcheck -x scripts/*.sh systemd/incus-docker-forward
 docker compose -f compose/nextcloud-aio.compose.yaml config
 ./scripts/validate-cloud-init.sh
+bash -n scripts/*.sh
 ```
 
 All checks should pass.
