@@ -61,11 +61,21 @@ runcmd:
   # Optional dotfiles bootstrap.
   # Single-quoted so spaces / & / ? in URLs can't break the command.
   # validate_simple_string upstream rejects single quotes in DOTFILES_REPO.
-  - if [ -n '__DOTFILES_REPO__' ] && [ ! -d /home/admin/.dotfiles ]; then
-      git clone '__DOTFILES_REPO__' /home/admin/.dotfiles
-      && chown -R admin:admin /home/admin/.dotfiles
-      && sudo -u admin env HOME=/home/admin bash -c
-         'cd ~/.dotfiles && __INSTALL_CMD__';
+  - if [ -n '__DOTFILES_REPO__' ]; then
+      if [ ! -d /home/admin/.dotfiles ]; then
+        git clone '__DOTFILES_REPO__' /home/admin/.dotfiles;
+        chown -R admin:admin /home/admin/.dotfiles;
+      fi;
+      if [ -e /home/admin/.zshrc ] && [ ! -L /home/admin/.zshrc ]; then
+        if [ ! -e /home/admin/.zshrc.pre-stow ]; then
+          mv /home/admin/.zshrc /home/admin/.zshrc.pre-stow;
+          chown admin:admin /home/admin/.zshrc.pre-stow;
+        else
+          rm -f /home/admin/.zshrc;
+        fi;
+      fi;
+      sudo -u admin env HOME=/home/admin bash -c
+        'cd ~/.dotfiles && __INSTALL_CMD__';
     fi
 
   # Ollama (official installer).

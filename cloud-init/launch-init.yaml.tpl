@@ -67,11 +67,23 @@ runcmd:
   - systemctl reload ssh || systemctl restart ssh || systemctl reload sshd || systemctl restart sshd
 
   # ── Dotfiles (skipped if no repo URL) ───────────────────────────────────────
-  - if [ -n '__DOTFILES_REPO__' ] && [ ! -d /home/admin/.dotfiles ]; then
-      git clone '__DOTFILES_REPO__' /home/admin/.dotfiles
-      && chown -R admin:admin /home/admin/.dotfiles
-      && sudo -u admin env HOME=/home/admin bash -c
-         'cd ~/.dotfiles && __INSTALL_CMD__';
+  # Preserve the distribution .zshrc before Stow claims that exact path. Keep
+  # cloning and applying separate so a failed Stow run is safely retryable.
+  - if [ -n '__DOTFILES_REPO__' ]; then
+      if [ ! -d /home/admin/.dotfiles ]; then
+        git clone '__DOTFILES_REPO__' /home/admin/.dotfiles;
+        chown -R admin:admin /home/admin/.dotfiles;
+      fi;
+      if [ -e /home/admin/.zshrc ] && [ ! -L /home/admin/.zshrc ]; then
+        if [ ! -e /home/admin/.zshrc.pre-stow ]; then
+          mv /home/admin/.zshrc /home/admin/.zshrc.pre-stow;
+          chown admin:admin /home/admin/.zshrc.pre-stow;
+        else
+          rm -f /home/admin/.zshrc;
+        fi;
+      fi;
+      sudo -u admin env HOME=/home/admin bash -c
+        'cd ~/.dotfiles && __INSTALL_CMD__';
     fi
   - test -d /home/admin/.dotfiles
 

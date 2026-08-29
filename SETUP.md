@@ -1251,6 +1251,8 @@ incus exec build-base-<timestamp> -- cat /var/log/cloud-init-output.log
 ### Dotfiles didn't apply
 - Verify `DOTFILES_REPO` is anonymously readable; guest VMs receive no Git
   credential, and embedding a token in cloud-init or a URL would expose it.
+- A regular distribution `/home/admin/.zshrc` is preserved automatically as
+  `/home/admin/.zshrc.pre-stow` before the dotfiles package is applied.
 - `incus exec <name> -- ls /home/admin/.dotfiles`
 - `incus exec <name> -- tail /var/log/cloud-init-output.log`
 
