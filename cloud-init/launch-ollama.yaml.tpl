@@ -8,7 +8,7 @@
 #
 # Placeholders substituted by ollama-vm.sh before launch:
 #   __DOTFILES_REPO__      optional dotfiles repo (may be empty)
-#   __INSTALL_CMD__        dotfiles apply command (e.g. stow .)
+#   __INSTALL_CMD__        dotfiles apply command (e.g. stow */)
 # =============================================================================
 
 # The Ubuntu default user is renamed to admin during scripts-user. Disable the

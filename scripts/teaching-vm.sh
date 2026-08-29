@@ -2,10 +2,11 @@
 # =============================================================================
 # teaching-vm.sh — create or re-enter the persistent teaching workspace.
 #
-# The workspace deliberately exposes three independent host trees:
+# The workspace deliberately exposes four independent host repositories:
 #   /home/admin/project                  teaching-src (primary workspace)
 #   /home/admin/repos/teaching-private  teaching-private (separate repository)
-#   /home/admin/texmf                    personal TEXMF tree
+#   /home/admin/texmf/mtex              mtex TDS tree
+#   /home/admin/texmf/mstuff            mstuff TDS tree
 #
 # Bare source names are configured in config.env and resolve below
 # GIT_REPOS_ROOT. Override them with absolute paths in config.env.local when
@@ -32,14 +33,25 @@ validate_name "$NAME" "vm-name"
 for variable_name in \
     TEACHING_SRC_REPO \
     TEACHING_PRIVATE_REPO \
-    TEACHING_TEXMF_ROOT \
-    TEACHING_TEXMF_VERIFY_FILE; do
+    TEACHING_MTEX_REPO \
+    TEACHING_MSTUFF_REPO \
+    TEACHING_TEXMF_HOME \
+    TEACHING_TEXMF_VERIFY_FILES; do
   [[ -n "${!variable_name:-}" ]] \
     || { echo "ERROR: $variable_name is not set." >&2; exit 2; }
 done
 
-exec "$SCRIPT_DIR/latex-vm.sh" "$NAME" \
-  --git "$TEACHING_SRC_REPO" \
-  --mount "$TEACHING_PRIVATE_REPO=/home/admin/repos/teaching-private" \
-  --mount "$TEACHING_TEXMF_ROOT=/home/admin/texmf" \
-  --verify-tex "$TEACHING_TEXMF_VERIFY_FILE"
+read -r -a texmf_verify_files <<< "$TEACHING_TEXMF_VERIFY_FILES"
+latex_vm_args=(
+  "$NAME"
+  --git "$TEACHING_SRC_REPO"
+  --mount "$TEACHING_PRIVATE_REPO=/home/admin/repos/teaching-private"
+  --mount "$TEACHING_MTEX_REPO=/home/admin/texmf/mtex"
+  --mount "$TEACHING_MSTUFF_REPO=/home/admin/texmf/mstuff"
+  --texmf-home "$TEACHING_TEXMF_HOME"
+)
+for tex_input in "${texmf_verify_files[@]}"; do
+  latex_vm_args+=(--verify-tex "$tex_input")
+done
+
+exec "$SCRIPT_DIR/latex-vm.sh" "${latex_vm_args[@]}"

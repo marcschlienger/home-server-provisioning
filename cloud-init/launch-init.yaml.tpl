@@ -15,7 +15,7 @@
 #
 # Placeholders substituted by the launch scripts before launch:
 #   __DOTFILES_REPO__    git URL of dotfiles repo (may be empty)
-#   __INSTALL_CMD__      command to apply dotfiles (default: stow .)
+#   __INSTALL_CMD__      command to apply dotfiles (default: stow */)
 # =============================================================================
 
 # The Ubuntu default user is renamed to admin during scripts-user. The next

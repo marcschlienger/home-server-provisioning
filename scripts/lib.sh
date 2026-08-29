@@ -330,14 +330,41 @@ verify_workspace_bootstrap() {
   fi
 }
 
-# Verify that a TeX input is visible to the fixed workspace user. This is used
-# by the teaching workspace after its personal TEXMF tree has been mounted at
-# /home/admin/texmf (TeX Live's default TEXMFHOME for that user).
-# Usage: verify_tex_input <instance> <class-or-style-file>
+# Persist an explicit TEXMFHOME for POSIX login shells and zsh. This is useful
+# when complete TDS repositories are mounted side by side instead of merged.
+# Usage: configure_texmf_home <instance> <texmf-home-value>
+configure_texmf_home() {
+  local instance="$1"
+  local texmf_home="${2:-}"
+
+  [[ -n "$texmf_home" ]] || return 0
+  if [[ ! "$texmf_home" =~ ^[A-Za-z0-9_./{},:-]+$ ]]; then
+    echo "ERROR: TEXMFHOME contains unsupported characters: $texmf_home" >&2
+    return 1
+  fi
+
+  # The single-quoted program is evaluated by the guest shell, not this one.
+  # shellcheck disable=SC2016
+  incus exec "$instance" -- sh -c '
+    value=$1
+    profile=/etc/profile.d/90-workspace-texmf.sh
+    printf "export TEXMFHOME=\047%s\047\n" "$value" > "$profile"
+    chmod 0644 "$profile"
+    if [ -f /etc/zsh/zshenv ] && ! grep -Fqx ". $profile" /etc/zsh/zshenv; then
+      printf "\n. %s\n" "$profile" >> /etc/zsh/zshenv
+    fi
+  ' sh "$texmf_home"
+}
+
+# Verify that a TeX input is visible to the fixed workspace user. An explicit
+# TEXMFHOME may be supplied for side-by-side complete TDS trees.
+# Usage: verify_tex_input <instance> <class-or-style-file> [texmf-home-value]
 verify_tex_input() {
   local instance="$1"
   local tex_input="$2"
+  local texmf_home="${3:-}"
   local resolved
+  local environment=(HOME=/home/admin)
 
   [[ -n "$tex_input" ]] || return 0
   if [[ ! "$tex_input" =~ ^[A-Za-z0-9._/-]+$ ]]; then
@@ -345,28 +372,35 @@ verify_tex_input() {
     return 1
   fi
 
-  resolved=$(incus exec "$instance" -- sudo -u admin env HOME=/home/admin \
+  [[ -z "$texmf_home" ]] || environment+=(TEXMFHOME="$texmf_home")
+  resolved=$(incus exec "$instance" -- sudo -u admin env "${environment[@]}" \
     kpsewhich "$tex_input" 2>/dev/null || true)
   if [[ -z "$resolved" ]]; then
     echo "ERROR: '$tex_input' is not visible in the TeX search path of '$instance'." >&2
-    echo "       Check the host style tree and its /home/admin/texmf mount." >&2
+    echo "       Check the host TeX trees, their mounts, and TEXMFHOME." >&2
     return 1
   fi
   echo "==> TeX input verified: $tex_input -> $resolved"
 }
 
 # Combined wait then enter as the fixed admin VM user. Used after first-run creation.
-# Usage:  wait_and_enter <instance> [tex-input-to-verify]
+# Usage:  wait_and_enter <instance> [texmf-home] [tex-input-to-verify]...
 wait_and_enter() {
   local instance="$1"
-  local tex_input="${2:-}"
+  shift
+  local texmf_home="${1:-}"
+  (( $# == 0 )) || shift
   echo "==> Waiting for VM to be reachable + cloud-init to finish..."
   wait_for_instance "$instance"   || { echo "ERROR: VM did not become reachable." >&2; exit 1; }
   wait_for_cloud_init "$instance" || { echo "ERROR: cloud-init failed; see log above." >&2; exit 1; }
   verify_workspace_bootstrap "$instance" \
     || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
-  verify_tex_input "$instance" "$tex_input" \
-    || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
+  configure_texmf_home "$instance" "$texmf_home" \
+    || { echo "ERROR: TEXMFHOME configuration failed." >&2; exit 1; }
+  for tex_input in "$@"; do
+    verify_tex_input "$instance" "$tex_input" "$texmf_home" \
+      || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
+  done
   clear_instance_user_data "$instance"
   echo "==> Entering '$instance'..."
   exec incus exec "$instance" -- su - admin
@@ -374,15 +408,21 @@ wait_and_enter() {
 
 # If the instance already exists, start it if needed and exec into it.
 # Returns 0 after exec (process replaced), 1 if instance doesn't exist.
-# Usage:  reenter_if_exists <name> [tex-input-to-verify]
+# Usage:  reenter_if_exists <name> [texmf-home] [tex-input-to-verify]...
 reenter_if_exists() {
   local instance="$1"
-  local tex_input="${2:-}"
+  shift
+  local texmf_home="${1:-}"
+  (( $# == 0 )) || shift
   ensure_instance_ready "$instance" || return 1
   verify_workspace_bootstrap "$instance" \
     || { echo "ERROR: workspace bootstrap verification failed." >&2; exit 1; }
-  verify_tex_input "$instance" "$tex_input" \
-    || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
+  configure_texmf_home "$instance" "$texmf_home" \
+    || { echo "ERROR: TEXMFHOME configuration failed." >&2; exit 1; }
+  for tex_input in "$@"; do
+    verify_tex_input "$instance" "$tex_input" "$texmf_home" \
+      || { echo "ERROR: TeX input verification failed." >&2; exit 1; }
+  done
   clear_instance_user_data "$instance"
   echo "==> Entering '$instance'..."
   exec incus exec "$instance" -- su - admin

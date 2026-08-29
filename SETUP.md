@@ -575,7 +575,7 @@ chmod 600 config.env.local
 ```
 
 Notes:
-- `DOTFILES_INSTALL_CMD` default is `stow .` — change in `.local` only if
+- `DOTFILES_INSTALL_CMD` default is `stow */` — change in `.local` only if
   your repo uses a different layout. Must be a one-line command without
   single quotes or newlines (the launch scripts reject those).
 - The unedited placeholder URL `https://github.com/YOUR_USERNAME/dotfiles`
@@ -698,12 +698,21 @@ key-based login, add your public key manually to
 # without the flags; every mount remains attached to the VM.
 ```
 
-**Teaching-agent workspace** (public sources, private assessments, and the
-personal TEXMF tree kept as separate host directories):
+**Teaching-agent workspace** (public sources, private assessments, and the two
+published TeX repositories kept as separate host directories):
 
 ```bash
-# Defaults below GIT_REPOS_ROOT:
-#   teaching-src, teaching-private, teaching-texmf
+# Clone these once on the server below GIT_REPOS_ROOT (alongside the two
+# teaching repositories):
+source ./config.env
+[[ ! -f ./config.env.local ]] || source ./config.env.local
+cd "$GIT_REPOS_ROOT"
+git clone https://github.com/marcschlienger/mtex.git
+git clone https://github.com/marcschlienger/mstuff.git
+
+# Then launch from home-server-provisioning. The four default directory names
+# are teaching-src, teaching-private, mtex, and mstuff.
+cd /path/to/home-server-provisioning
 # Override any of these with an absolute path in config.env.local when needed.
 ./scripts/teaching-vm.sh teaching-ws
 ```
@@ -713,13 +722,20 @@ Inside the VM the paths are stable:
 ```text
 /home/admin/project                  teaching-src
 /home/admin/repos/teaching-private  teaching-private
-/home/admin/texmf                    personal TEXMF tree
+/home/admin/texmf/mtex              mtex
+/home/admin/texmf/mstuff            mstuff
 ```
 
-The launcher verifies `msheet.cls` with `kpsewhich` before opening the shell.
-Change `TEACHING_TEXMF_VERIFY_FILE` in `config.env.local` if a different file
-is the appropriate installation probe. The repositories remain independent;
+The launcher sets `TEXMFHOME` to the two complete TDS trees, then verifies the
+`msheet`, `mtest`, `mexam`, and `mtalk` classes plus the shared style files with
+`kpsewhich` before opening the shell. Change `TEACHING_TEXMF_VERIFY_FILES` in
+`config.env.local` to adjust these probes. The repositories remain independent;
 Nextcloud is not mounted into the teaching workspace.
+
+The dotfiles repository contains the shared skills as the `teaching-agent`
+Stow package. New VMs install it automatically through the default `stow */`.
+After updating an existing VM's dotfiles clone, expose the new package once
+with `cd ~/.dotfiles && stow -R teaching-agent`.
 
 **JupyterHub** (small group / personal):
 ```bash
@@ -757,18 +773,19 @@ ssh admin@<vm-incusbr0-ip>
 
 ### 3.1 Working on a teaching worksheet (LaTeX VM)
 
-The configured teaching launcher keeps three host repositories independent:
+The configured teaching launcher keeps four host repositories independent:
 
 ```text
 /home/admin/project                  teaching-src
 /home/admin/repos/teaching-private  teaching-private
-/home/admin/texmf                    teaching-texmf
+/home/admin/texmf/mtex              mtex
+/home/admin/texmf/mstuff            mstuff
 ```
 
-The tracked defaults are the four `TEACHING_*` values in `config.env`. Override
-different local repository paths or the probe filename in `config.env.local`.
-The TEXMF repository should use the standard layout, for example
-`tex/latex/local/msheet.cls`.
+The tracked defaults are the `TEACHING_*` values in `config.env`. Override
+different local repository paths, the explicit `TEXMFHOME`, or the probe list
+in `config.env.local`. Both TeX repositories retain their standard TDS layout;
+they are not copied or merged into a generated third tree.
 
 ```bash
 source ./config.env
@@ -790,7 +807,7 @@ git status
 git push
 ```
 
-The wrapper verifies the configured `.cls` or `.sty` file with `kpsewhich`
+The wrapper verifies every configured `.cls` and `.sty` file with `kpsewhich`
 before opening a shell. A separate non-interactive check can also compile a
 representative document from either source repository:
 
@@ -814,13 +831,19 @@ stopped, before its first boot.
   --verify-tex my-style.sty
 ```
 
-TeX Live searches `/home/admin/texmf` as the `admin` user's private TeX tree.
-Choose the mount point to match the style repository's layout:
+TeX Live normally searches `/home/admin/texmf` as the `admin` user's private
+TeX tree. Choose the mount point to match the style repository's layout:
 
 - If the repository already contains `tex/latex/<package>/*.sty` or `.cls`,
   mount its root at `/home/admin/texmf`.
 - If `.sty` and `.cls` files sit directly in the repository root, mount it at
   `/home/admin/texmf/tex/latex/local` as in the example above.
+- For multiple complete TDS repositories, mount each below
+  `/home/admin/texmf` and pass a brace-delimited list such as
+  `--texmf-home '{/home/admin/texmf/mtex,/home/admin/texmf/mstuff}'`.
+
+`--verify-tex` is repeatable. An explicit `--texmf-home` is persisted for POSIX
+login shells and zsh in the VM, and is also applied directly during checks.
 
 Inside the VM, confirm that TeX can find a file:
 
@@ -838,21 +861,29 @@ devices directly. This requires neither an image rebuild nor VM recreation:
 
 ```bash
 incus stop latex-wp
+# If the old combined tree is still mounted, identify and remove that device
+# first; a mount at /home/admin/texmf cannot overlap the two paths below.
+incus config device list latex-wp
+# incus config device remove latex-wp texmf
+
 incus config device add latex-wp teaching-private disk \
   source="$GIT_REPOS_ROOT/teaching-private" \
   path=/home/admin/repos/teaching-private
-incus config device add latex-wp texmf disk \
-  source="$GIT_REPOS_ROOT/teaching-texmf" \
-  path=/home/admin/texmf
+incus config device add latex-wp mtex disk \
+  source="$GIT_REPOS_ROOT/mtex" \
+  path=/home/admin/texmf/mtex
+incus config device add latex-wp mstuff disk \
+  source="$GIT_REPOS_ROOT/mstuff" \
+  path=/home/admin/texmf/mstuff
 incus start latex-wp
 
 ./scripts/verify-teaching-vm.sh latex-wp
 ./scripts/teaching-vm.sh latex-wp
 ```
 
-If only the style tree is needed, add only `texmf`. For a flat style repository,
-use `path=/home/admin/texmf/tex/latex/local` instead. Device names must be
-unique. To replace a mapping, stop the VM, run
+If only one TeX repository is needed in another workspace, add only that tree.
+For a flat style repository, use `path=/home/admin/texmf/tex/latex/local`
+instead. Device names must be unique. To replace a mapping, stop the VM, run
 `incus config device remove <vm> <device-name>`, and add it again.
 
 ### 3.2 Running an agent on a project (persistent VM)

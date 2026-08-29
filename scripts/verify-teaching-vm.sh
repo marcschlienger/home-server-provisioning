@@ -39,8 +39,10 @@ done
 for variable_name in \
     TEACHING_SRC_REPO \
     TEACHING_PRIVATE_REPO \
-    TEACHING_TEXMF_ROOT \
-    TEACHING_TEXMF_VERIFY_FILE; do
+    TEACHING_MTEX_REPO \
+    TEACHING_MSTUFF_REPO \
+    TEACHING_TEXMF_HOME \
+    TEACHING_TEXMF_VERIFY_FILES; do
   [[ -n "${!variable_name:-}" ]] \
     || { echo "ERROR: $variable_name is not set." >&2; exit 2; }
 done
@@ -48,17 +50,23 @@ done
 command -v incus >/dev/null 2>&1 || { echo "ERROR: incus CLI not found." >&2; exit 1; }
 src_path=$(resolve_git_path "$TEACHING_SRC_REPO" "$GIT_REPOS_ROOT")
 private_path=$(resolve_git_path "$TEACHING_PRIVATE_REPO" "$GIT_REPOS_ROOT")
-texmf_path=$(resolve_git_path "$TEACHING_TEXMF_ROOT" "$GIT_REPOS_ROOT")
+mtex_path=$(resolve_git_path "$TEACHING_MTEX_REPO" "$GIT_REPOS_ROOT")
+mstuff_path=$(resolve_git_path "$TEACHING_MSTUFF_REPO" "$GIT_REPOS_ROOT")
+read -r -a texmf_verify_files <<< "$TEACHING_TEXMF_VERIFY_FILES"
 
 ensure_instance_ready "$NAME" \
   || { echo "ERROR: teaching VM not found: $NAME" >&2; exit 1; }
 
 verify_project_mount "$NAME" "$src_path"
 verify_bind_mount "$NAME" "$private_path" /home/admin/repos/teaching-private
-verify_bind_mount "$NAME" "$texmf_path" /home/admin/texmf
+verify_bind_mount "$NAME" "$mtex_path" /home/admin/texmf/mtex
+verify_bind_mount "$NAME" "$mstuff_path" /home/admin/texmf/mstuff
 verify_workspace_bootstrap "$NAME"
-verify_tex_input "$NAME" "$TEACHING_TEXMF_VERIFY_FILE"
-echo "==> Both teaching repositories and the personal TEXMF tree are visible."
+configure_texmf_home "$NAME" "$TEACHING_TEXMF_HOME"
+for tex_input in "${texmf_verify_files[@]}"; do
+  verify_tex_input "$NAME" "$tex_input" "$TEACHING_TEXMF_HOME"
+done
+echo "==> Teaching repositories and both TeX trees are visible."
 
 if [[ -z "$TEX_SPEC" ]]; then
   echo "==> Teaching workspace validation passed (no representative build requested)."
@@ -90,7 +98,7 @@ incus exec "$NAME" -- test -f "$guest_file" \
 
 echo "==> Building representative document: $guest_file"
 incus exec "$NAME" --cwd "$guest_dir" -- sudo -u admin env HOME=/home/admin \
-  latexmk -pdf -interaction=nonstopmode "$tex_name"
+  TEXMFHOME="$TEACHING_TEXMF_HOME" latexmk -pdf -interaction=nonstopmode "$tex_name"
 incus exec "$NAME" -- test -f "$guest_dir/$pdf_name" \
   || { echo "ERROR: expected PDF was not produced: $guest_dir/$pdf_name" >&2; exit 1; }
 

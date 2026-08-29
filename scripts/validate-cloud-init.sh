@@ -251,7 +251,7 @@ VALIDATION_TMPDIR=$(mktemp -d)
 trap 'rm -rf "$VALIDATION_TMPDIR"' EXIT
 
 S_DOTFILES_REPO="https://github.com/example/dotfiles.git"
-S_INSTALL_CMD="stow ."
+S_INSTALL_CMD="stow */"
 S_ADMIN_USER="alice"
 S_TS_AUTHKEY="tskey-auth-EXAMPLE"
 S_TS_HOSTNAME="jupyter-test"
@@ -308,7 +308,7 @@ eval "$(
 	# shellcheck source=config.env
 	source "$ROOT_DIR/config.env"
 	printf 'D_DOTFILES_REPO=%q\n'  "${DOTFILES_REPO:-}"
-	printf 'D_INSTALL_CMD=%q\n'    "${DOTFILES_INSTALL_CMD:-stow .}"
+	printf 'D_INSTALL_CMD=%q\n'    "${DOTFILES_INSTALL_CMD:-stow */}"
 	printf 'D_JUPYTER_TS_AUTHKEY=%q\n' "${JUPYTER_TS_AUTHKEY:-}"
 	)"
 D_DOTFILES_REPO_EFFECTIVE=$(effective_dotfiles_repo "$D_DOTFILES_REPO")

@@ -5,7 +5,8 @@
 # Usage:
 #   ./latex-vm.sh [vm-name] [--git <repo-name-or-path>]
 #                 [--mount <source>=<guest-path>]...
-#                 [--verify-tex <class-or-style-file>]
+#                 [--texmf-home <kpathsea-tree-list>]
+#                 [--verify-tex <class-or-style-file>]...
 #
 # Options:
 #   --git <name|path>   On FIRST run, bind-mount a host directory at
@@ -16,8 +17,10 @@
 #   --mount <src>=<dst>  Add another host repository. Bare sources resolve
 #                       under GIT_REPOS_ROOT. The guest path must be below
 #                       /home/admin/repos or /home/admin/texmf. Repeatable.
+#   --texmf-home <value> Configure TEXMFHOME persistently for login shells and
+#                       use it for verification. Useful for side-by-side trees.
 #   --verify-tex <file>  Before entering the VM, require kpsewhich to find this
-#                       class or style file as the admin user.
+#                       class or style file as the admin user. Repeatable.
 #
 # Behaviour:
 #   - First run: creates the VM, mounts the project, waits for cloud-init,
@@ -43,7 +46,8 @@ load_config "$ROOT_DIR/config.env"
 NAME=""
 GIT_ARG=""
 MOUNT_SPECS=()
-VERIFY_TEX_INPUT=""
+TEXMF_HOME=""
+VERIFY_TEX_INPUTS=()
 
 die()   { echo "ERROR: $*" >&2; exit 1; }
 usage() { sed -n '2,34p' "$0"; }
@@ -56,10 +60,12 @@ while [[ $# -gt 0 ]]; do
            GIT_ARG="$2"; shift 2 ;;
     --mount) require_value --mount "${2:-}" || exit 2
              MOUNT_SPECS+=("$2"); shift 2 ;;
+    --texmf-home) require_value --texmf-home "${2:-}" || exit 2
+                  [[ -z "$TEXMF_HOME" ]] \
+                    || { echo "ERROR: --texmf-home may be specified only once." >&2; exit 2; }
+                  TEXMF_HOME="$2"; shift 2 ;;
     --verify-tex) require_value --verify-tex "${2:-}" || exit 2
-                  [[ -z "$VERIFY_TEX_INPUT" ]] \
-                    || { echo "ERROR: --verify-tex may be specified only once." >&2; exit 2; }
-                  VERIFY_TEX_INPUT="$2"; shift 2 ;;
+                  VERIFY_TEX_INPUTS+=("$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "Unknown flag: $1" >&2; exit 2 ;;
     *)  [[ -n "$NAME" ]] \
@@ -70,9 +76,13 @@ done
 
 NAME="${NAME:-latex-ws}"
 validate_name "$NAME" "vm-name"
-if [[ -n "$VERIFY_TEX_INPUT" && ! "$VERIFY_TEX_INPUT" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-  die "--verify-tex contains unsupported characters: $VERIFY_TEX_INPUT"
+if [[ -n "$TEXMF_HOME" && ! "$TEXMF_HOME" =~ ^[A-Za-z0-9_./{},:-]+$ ]]; then
+  die "--texmf-home contains unsupported characters: $TEXMF_HOME"
 fi
+for tex_input in "${VERIFY_TEX_INPUTS[@]}"; do
+  [[ "$tex_input" =~ ^[A-Za-z0-9._/-]+$ ]] \
+    || die "--verify-tex contains unsupported characters: $tex_input"
+done
 
 command -v incus >/dev/null 2>&1 || die "incus CLI not found."
 
@@ -104,7 +114,7 @@ if incus info "$NAME" &>/dev/null; then
     verify_bind_mount "$NAME" "${EXTRA_MOUNT_SOURCES[$i]}" "${EXTRA_MOUNT_TARGETS[$i]}"
   done
 fi
-if reenter_if_exists "$NAME" "$VERIFY_TEX_INPUT"; then
+if reenter_if_exists "$NAME" "$TEXMF_HOME" "${VERIFY_TEX_INPUTS[@]}"; then
   : # process replaced by exec; we don't reach here
 fi
 
@@ -184,4 +194,4 @@ fi
 echo "Re-enter any time with:  ./scripts/latex-vm.sh $NAME"
 echo "Or SSH from the host:    ssh admin@\$(incus list $NAME -c4 --format csv | cut -d' ' -f1)"
 echo ""
-wait_and_enter "$NAME" "$VERIFY_TEX_INPUT"
+wait_and_enter "$NAME" "$TEXMF_HOME" "${VERIFY_TEX_INPUTS[@]}"

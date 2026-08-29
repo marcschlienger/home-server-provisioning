@@ -47,13 +47,13 @@ incus image info "$BASE_IMAGE" >/dev/null 2>&1 \
 # to empty so first boot doesn't try to clone https://github.com/YOUR_USERNAME/dotfiles.
 EFFECTIVE_DOTFILES_REPO=$(effective_dotfiles_repo "${DOTFILES_REPO:-}")
 validate_simple_string "$EFFECTIVE_DOTFILES_REPO" "DOTFILES_REPO"
-validate_simple_string "${DOTFILES_INSTALL_CMD:-stow .}" "DOTFILES_INSTALL_CMD"
+validate_simple_string "${DOTFILES_INSTALL_CMD:-stow */}" "DOTFILES_INSTALL_CMD"
 validate_dotfiles_repo "$EFFECTIVE_DOTFILES_REPO" "DOTFILES_REPO"
 
 # ── Build launch-init user-data ───────────────────────────────────────────────
 USER_DATA=$(render_template_checked "$ROOT_DIR/cloud-init/launch-ollama.yaml.tpl" \
   DOTFILES_REPO="$EFFECTIVE_DOTFILES_REPO" \
-  INSTALL_CMD="${DOTFILES_INSTALL_CMD:-stow .}")
+  INSTALL_CMD="${DOTFILES_INSTALL_CMD:-stow */}")
 
 echo "==> Launching Ollama VM: $NAME"
 incus launch "$BASE_IMAGE" "$NAME" \
